@@ -4,3 +4,9 @@
 
 # input : query 문장 (llm 이 해줄거임)
 # output : query 문장 / embedding vector
+
+from ..Models.embedding import Embedding
+
+def query_embedding(query):
+    embedding_vector = Embedding(query)
+    return query, embedding_vector
