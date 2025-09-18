@@ -22,9 +22,9 @@ def Embedding(texts):
     response = requests.post(url, json=payload, headers=headers)
     
     if response.status_code == 200:
-        return response.json()
+        result = response.json()
+        # Extract only the embedding vectors and return as a list of arrays
+        embeddings = [item['embedding'] for item in result['data']]
+        return embeddings
     else:
         raise Exception(f"Error: {response.status_code}, {response.text}")
-    
-    
-    

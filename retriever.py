@@ -6,29 +6,23 @@
 
 import zmq
 import json
-import chromadb
 import sys
 import os
 from typing import Optional, Dict, Any, List
 
-# 상위 디렉토리를 path에 추가
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from Models.embedding import Embedding
 from Models.reranker import Reranker
+from db import search_data
 
 
 class FileRetriever:
     """파일을 요청하고 내용을 받아오는 간단한 클라이언트"""
     
-    def __init__(self, preprocessor_host="localhost", preprocessor_port=5557, 
-                 chroma_path="./chroma_db", collection_name="documents"):
+    def __init__(self, preprocessor_host="localhost", preprocessor_port=5557):
         """
         Args:
             preprocessor_host: file_preprocessor 서버 주소
             preprocessor_port: file_preprocessor 서버 포트 (기본값: 5557)
-            chroma_path: ChromaDB 저장 경로
-            collection_name: ChromaDB 컬렉션 이름
         """
         self.preprocessor_host = preprocessor_host
         self.preprocessor_port = preprocessor_port
@@ -38,12 +32,8 @@ class FileRetriever:
         self.socket = self.context.socket(zmq.REQ)
         self.socket.connect(f"tcp://{preprocessor_host}:{preprocessor_port}")
         
-        # ChromaDB 초기화
-        self.chroma_client = chromadb.PersistentClient(path=chroma_path)
-        self.collection = self.chroma_client.get_or_create_collection(name=collection_name)
-        
         print(f"📡 FileRetriever 연결됨: tcp://{preprocessor_host}:{preprocessor_port}")
-        print(f"🗄️ ChromaDB 연결됨: {chroma_path}/{collection_name}")
+        print(f"🗄️ db.py 연결됨")
     
     def get_file_content(self, file_path: str, timeout_ms: int = 5000) -> Optional[str]:
         """
@@ -105,29 +95,24 @@ class FileRetriever:
             return None
     
     def _search_similar_chunks(self, query_embedding: List[float], n_results: int = 10) -> List[Dict]:
-        """ChromaDB에서 유사한 chunk들을 검색합니다."""
+        """db.py를 사용하여 유사한 chunk들을 검색합니다."""
         try:
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=n_results
-            )
+            results = search_data(query_embedding, n_results=n_results)
             
             chunks = []
-            if results['ids'] and results['ids'][0]:
-                for i, chunk_id in enumerate(results['ids'][0]):
-                    metadata = results['metadatas'][0][i] if results['metadatas'] else {}
-                    chunks.append({
-                        'file_path': metadata.get('file_path', ''),
-                        'start_pos': metadata.get('start_pos', 0),
-                        'end_pos': metadata.get('end_pos', 0),
-                        'distance': results['distances'][0][i] if results['distances'] else 0
-                    })
+            for i, (file_path, start_idx, end_idx) in enumerate(results):
+                chunks.append({
+                    'file_path': file_path,
+                    'start_pos': start_idx,  # start_idx를 start_pos로 매핑
+                    'end_pos': end_idx,      # end_idx를 end_pos로 매핑
+                    'distance': 0  # db.py에서는 distance 정보를 제공하지 않음
+                })
             
-            print(f"🔍 ChromaDB 검색 완료: {len(chunks)}개 chunk 발견")
+            print(f"🔍 db.py 검색 완료: {len(chunks)}개 chunk 발견")
             return chunks
             
         except Exception as e:
-            print(f"❌ ChromaDB 검색 실패: {e}")
+            print(f"❌ db.py 검색 실패: {e}")
             return []
     
     def _extract_chunk_text(self, file_path: str, start_pos: int, end_pos: int) -> Optional[str]:

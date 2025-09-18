@@ -4,7 +4,7 @@ RAG LLM Agent - MVP
 """
 
 from Models.llm import LLM
-from Retriever.retriever import FileRetriever
+from retriever import FileRetriever
 
 
 class RAGAgent:
