@@ -7,9 +7,15 @@
 import zmq
 import json
 import chromadb
+import sys
+import os
 from typing import Optional, Dict, Any, List
-from ..Models.embedding import Embedding
-from ..Models.reranker import Reranker
+
+# 상위 디렉토리를 path에 추가
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from Models.embedding import Embedding
+from Models.reranker import Reranker
 
 
 class FileRetriever:

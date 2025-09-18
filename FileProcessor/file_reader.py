@@ -13,6 +13,7 @@
 import os
 from docx import Document
 import pdfplumber
+from pyhwpx import Hwp
 
 
 def read_file(file_path: str) -> str:

@@ -3,7 +3,7 @@ import requests
 import json
 
 
-server_url = "http://inputnameplz.iptime.org:12346"  # vLLM 서버 주소
+server_url = "http://inputnameplz.iptime.org:12347"  # vLLM 서버 주소
 model_name = "Qwen/Qwen3-Embedding-0.6B"  # 사용하는 임베딩 모델명
 
 
