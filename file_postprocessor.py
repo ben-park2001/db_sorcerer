@@ -1,4 +1,5 @@
 import zmq
+import time
 from Models.embedding import Embedding
 from Models.llm import LLM, LLM_small
 from db import create_data, delete_data
@@ -15,37 +16,83 @@ class FilePostprocessor:
         """파일 생성 처리"""
         file_path = message.get('file_path')
         content = message.get('content')
-        print(f"CREATE: {file_path}")
+        print(f"🔨 [CREATE] 파일 생성 처리 시작: {file_path}")
 
         if content:
+            print(f"   📝 텍스트 청킹 시작...")
             chunks, offsets = self._chunk_content(content, file_path)
+            print(f"   ✅ 청킹 완료: {len(chunks)}개 청크 생성")
+            
+            print(f"   🔍 임베딩 생성 시작...")
             embeddings = self._process_content(chunks, file_path, offsets)
+            print(f"   ✅ 임베딩 생성 완료: {len(embeddings)}개 벡터")
+            
+            print(f"   💾 ChromaDB 업로드 시작...")
             self._upload_embeddings(embeddings, file_path)
+            print(f"   ✅ ChromaDB 업로드 완료")
+            
+            print(f"   📊 요약 생성 시작...")
             self._summarize(chunks, file_path)
+            print(f"   ✅ 요약 생성 완료")
+        else:
+            print(f"   ⚠️ 파일 내용이 없습니다.")
+            
+        print(f"🎉 [CREATE] 파일 생성 처리 완료: {file_path}")
+        print("   " + "=" * 50)
 
     def handle_update(self, message):
         """파일 수정 처리"""
         file_path = message.get('file_path')
         content = message.get('content')
-        print(f"UPDATE: {file_path}")
         diff_content = message.get('diff_content')
+        
+        print(f"🔄 [UPDATE] 파일 수정 처리 시작: {file_path}")
+        
+        print(f"   🗑️ 기존 데이터 삭제 중...")
         delete_data(file_path)
+        print(f"   ✅ 기존 데이터 삭제 완료")
         
         if diff_content: 
+            print(f"   📊 변경사항 요약 생성 중...")
             summary = LLM_small(f"다음 변경사항을 1~2문장으로 요약해주세요: {diff_content}")
             file_name = file_path.split('\\')[-1]
-            print(f"{file_name} 파일이 수정되었습니다. 경로: {file_path}, 변경사항: {summary}")
+            print(f"   📋 {file_name} 파일이 수정되었습니다.")
+            print(f"   📍 경로: {file_path}")
+            print(f"   📝 변경사항: {summary}")
         
         if content:
+            print(f"   📝 텍스트 청킹 시작...")
             chunks, offsets = self._chunk_content(content, file_path)
+            print(f"   ✅ 청킹 완료: {len(chunks)}개 청크 생성")
+            
+            print(f"   🔍 임베딩 생성 시작...")
             embeddings = self._process_content(chunks, file_path, offsets)
+            print(f"   ✅ 임베딩 생성 완료: {len(embeddings)}개 벡터")
+            
+            print(f"   💾 ChromaDB 업로드 시작...")
             self._upload_embeddings(embeddings, file_path)
+            print(f"   ✅ ChromaDB 업로드 완료")
+        else:
+            print(f"   ⚠️ 파일 내용이 없습니다.")
+            
+        print(f"🎉 [UPDATE] 파일 수정 처리 완료: {file_path}")
+        print("   " + "=" * 50)
 
     def handle_delete(self, message):
         """파일 삭제 처리"""
         file_path = message.get('file_path')
-        print(f"DELETE: {file_path}")
+        print(f"🗑️ [DELETE] 파일 삭제 처리 시작: {file_path}")
+        
+        print(f"   💾 ChromaDB에서 데이터 삭제 중...")
         delete_data(file_path)
+        print(f"   ✅ ChromaDB 데이터 삭제 완료")
+        
+        file_name = file_path.split('\\')[-1] if '\\' in file_path else file_path.split('/')[-1]
+        print(f"   📋 {file_name} 파일이 삭제되었습니다.")
+        print(f"   📍 경로: {file_path}")
+        
+        print(f"🎉 [DELETE] 파일 삭제 처리 완료: {file_path}")
+        print("   " + "=" * 50)
 
     def _chunk_content(self, content, file_path):
         """텍스트 청킹"""
@@ -178,31 +225,87 @@ class FilePostprocessor:
 
     def _summarize(self, chunks, file_path):
         """배치 청크 요약 후 최종 요약"""
+        print(f"       📊 개별 청크 요약 생성 중... ({len(chunks)}개 청크)")
+        
         # 모든 chunks를 한 번에 배치 처리로 요약
         prompts = [f"다음 텍스트를 1~2문장으로 요약해주세요: {chunk}" for chunk in chunks]
         chunk_summaries = [LLM_small(prompt) for prompt in prompts]
+        
+        print(f"       ✅ 개별 청크 요약 완료")
+        print(f"       📝 최종 요약 생성 중...")
         
         # 요약들을 종합하여 최종 요약
         combined_summaries = "\n".join(chunk_summaries)
         final_summary = LLM_small(f"다음 요약들을 종합하여 최종 요약을 2~3문장으로 만들어주세요: {combined_summaries}")
         
         file_name = file_path.split('\\')[-1]
-        print(f"{file_name} 파일이 생성되었습니다. 경로: {file_path}, 내용: {final_summary}")
+        print(f"       📋 {file_name} 파일이 생성되었습니다.")
+        print(f"       📍 경로: {file_path}")
+        print(f"       📝 내용: {final_summary}")
+        print(f"       ✅ 최종 요약 완료")
 
     def _upload_embeddings(self, embeddings, file_path):
         """임베딩을 ChromaDB에 업로드"""
-        for embedding_data in embeddings:
-            create_data(
-                file_path=file_path,
-                start_idx=embedding_data['offset']['char_start'],
-                end_idx=embedding_data['offset']['char_end'],
-                embedding=embedding_data['embedding']
-            )
+        print(f"       💾 ChromaDB 업로드 진행 중... ({len(embeddings)}개 임베딩)")
+        
+        success_count = 0
+        for i, embedding_data in enumerate(embeddings):
+            try:
+                create_data(
+                    file_path=file_path,
+                    start_idx=embedding_data['offset']['char_start'],
+                    end_idx=embedding_data['offset']['char_end'],
+                    embedding=embedding_data['embedding']
+                )
+                success_count += 1
+                
+                # 진행률 표시 (10% 단위)
+                progress = (i + 1) / len(embeddings) * 100
+                if (i + 1) % max(1, len(embeddings) // 10) == 0 or i == len(embeddings) - 1:
+                    print(f"       📈 업로드 진행률: {progress:.0f}% ({i + 1}/{len(embeddings)})")
+                    
+            except Exception as e:
+                print(f"       ❌ 임베딩 업로드 실패 (청크 {i}): {e}")
+        
+        print(f"       ✅ ChromaDB 업로드 완료: {success_count}/{len(embeddings)} 성공")
 
     def process_message(self, message):
         """메시지 처리"""
         event_type = message.get('event_type')
-
+        file_path = message.get('file_path')
+        user_id = message.get('user_id')
+        timestamp = message.get('timestamp')
+        processed_timestamp = message.get('processed_timestamp')
+        status = message.get('status')
+        
+        # 메시지 수신 로그 출력
+        print(f"📥 [RECEIVE <- file_preprocessor] 파일 처리 메시지 수신")
+        print(f"   📄 파일: {file_path}")
+        print(f"   📋 이벤트: {event_type}")
+        print(f"   👤 사용자: {user_id}")
+        print(f"   ✅ 전처리 상태: {status}")
+        
+        if timestamp:
+            print(f"   📅 원본 타임스탬프: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))}")
+        if processed_timestamp:
+            print(f"   📅 처리 타임스탬프: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(processed_timestamp))}")
+        
+        content = message.get('content')
+        if content:
+            content_length = message.get('content_length', len(content))
+            print(f"   📏 내용 길이: {content_length:,} 문자")
+        
+        if event_type == 'update':
+            diff_type = message.get('diff_type')
+            diff_content = message.get('diff_content')
+            if diff_type:
+                print(f"   📊 Diff 타입: {diff_type}")
+                if diff_content:
+                    print(f"   📊 Diff 크기: {len(diff_content)} chars")
+        
+        print("   " + "-" * 50)
+        
+        # 실제 처리 로직 실행
         if event_type == 'create':
             self.handle_create(message)
         elif event_type == 'update':
@@ -210,7 +313,7 @@ class FilePostprocessor:
         elif event_type == 'delete':
             self.handle_delete(message)
         else:
-            print(f"Unknown event: {event_type}")
+            print(f"❌ 알 수 없는 이벤트 타입: {event_type}")
 
     def start(self):
         """서비스 시작"""

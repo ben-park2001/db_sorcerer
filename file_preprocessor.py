@@ -181,7 +181,27 @@ class FilePreprocessor:
             timestamp = message.get('timestamp')
             file_content = message.get('file_content')  # base64 encoded
             
-            print(f"📄 파일 변경사항 처리: {file_path} ({event_type})")
+            # 메시지 수신 로그 출력
+            print(f"� [RECEIVE <- file_watcher] 파일 변경사항 수신")
+            print(f"   📄 파일: {file_path}")
+            print(f"   📋 이벤트: {event_type}")
+            print(f"   👤 사용자: {user_id}")
+            print(f"   📅 타임스탬프: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))}")
+            
+            if event_type != 'delete':
+                file_size = message.get('file_size', 0)
+                print(f"   📏 파일 크기: {file_size:,} bytes")
+                has_content = bool(file_content)
+                print(f"   🔒 Base64 인코딩: {'✅' if has_content else '❌'}")
+                
+                if event_type == 'update':
+                    diff_type = message.get('diff_type')
+                    diff_content = message.get('diff_content')
+                    if diff_type:
+                        print(f"   📊 Diff 타입: {diff_type}")
+                        print(f"   📊 Diff 크기: {len(diff_content)} chars" if diff_content else "   📊 Diff: 없음")
+            
+            print("   " + "-" * 50)
             
             # 다음 노드로 전송할 메시지 구성
             processed_message = {
@@ -221,7 +241,23 @@ class FilePreprocessor:
             
             # 다음 노드로 전송
             self.push_socket.send_json(processed_message)
-            print(f"📤 다음 노드로 전송 완료: {file_path}")
+            
+            # 전송 로그 출력
+            print(f"📤 [SEND -> file_postprocessor] 처리된 파일 정보 전송")
+            print(f"   📄 파일: {file_path}")
+            print(f"   📋 이벤트: {event_type}")
+            print(f"   ✅ 처리 상태: {processed_message.get('status')}")
+            
+            if processed_message.get('content'):
+                content_length = processed_message.get('content_length', 0)
+                print(f"   📏 추출된 내용 길이: {content_length:,} 문자")
+            
+            if event_type == 'update' and processed_message.get('diff_content'):
+                print(f"   📊 Diff 정보: 포함됨")
+            
+            print(f"   📅 처리 시간: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(processed_message['processed_timestamp']))}")
+            print(f"   🚀 전송 포트: tcp://*:{self.push_port}")
+            print("   " + "-" * 50)
             
         except Exception as e:
             print(f"❌ 파일 변경사항 처리 중 오류: {e}")
@@ -239,12 +275,14 @@ class FilePreprocessor:
         try:
             # file_watcher에게 파일 요청
             request = {'file_path': file_path}
+            print(f"📤 [REQUEST -> file_watcher] 파일 요청 전송: {file_path}")
             self.req_socket.send_json(request)
             
             # 응답 수신 (타임아웃 설정)
             if self.req_socket.poll(timeout=5000):  # 5초 타임아웃
                 response = self.req_socket.recv_json()
                 if isinstance(response, dict):
+                    print(f"📥 [RECEIVE <- file_watcher] 응답 수신: {response.get('status', 'unknown')}")
                     return response
                 else:
                     print(f"⚠️ 예상하지 못한 응답 형식: {response}")
@@ -284,12 +322,17 @@ class FilePreprocessor:
                         })
                         continue
                         
-                    print(f"📥 파일 요청 수신: {file_path}")
+                    print(f"📥 [REQUEST] 파일 요청 수신: {file_path}")
                     
                     # file_watcher에게 파일 요청
+                    print(f"🔄 [REQUEST -> file_watcher] 파일 데이터 요청 중...")
                     watcher_response = self._request_file_from_watcher(file_path)
                     
                     if watcher_response and watcher_response.get('status') == 'success':
+                        print(f"✅ [RECEIVE <- file_watcher] 파일 데이터 수신 성공")
+                        file_size = watcher_response.get('file_size', 0)
+                        print(f"   📏 파일 크기: {file_size:,} bytes")
+                        
                         # 파일 내용 추출
                         file_content = watcher_response.get('file_content')
                         extracted_content = self._extract_file_content(file_path, file_content)
@@ -303,17 +346,21 @@ class FilePreprocessor:
                                 'file_name': watcher_response.get('file_name'),
                                 'file_size': watcher_response.get('file_size')
                             }
-                            print(f"✅ 파일 요청 처리 완료: {file_path}")
+                            print(f"✅ 파일 내용 추출 완료: {len(extracted_content):,} 문자")
+                            print(f"📤 [RESPONSE] 클라이언트에게 응답 전송")
                         else:
                             response = {
                                 'status': 'error',
                                 'error': '파일 내용 추출 실패',
                                 'file_path': file_path
                             }
+                            print(f"❌ 파일 내용 추출 실패")
                     else:
+                        error_msg = watcher_response.get('error', 'file_watcher 요청 실패') if watcher_response else 'file_watcher 응답 없음'
+                        print(f"❌ [ERROR <- file_watcher] {error_msg}")
                         response = {
                             'status': 'error',
-                            'error': watcher_response.get('error', 'file_watcher 요청 실패') if watcher_response else 'file_watcher 응답 없음',
+                            'error': error_msg,
                             'file_path': file_path
                         }
                     

@@ -21,7 +21,7 @@ from git import Repo, InvalidGitRepositoryError
 
 
 class FileWatcher:
-    def __init__(self, watch_folder="./watch_folder", push_port=5555, router_port=5556):
+    def __init__(self, watch_folder, push_port=5555, router_port=5556):
         self.watch_folder = Path(watch_folder)
         self.push_port = push_port
         self.router_port = router_port
@@ -210,9 +210,25 @@ class FileWatcher:
             
             # ZeroMQ PUSH로 메시지 전송
             self.push_socket.send_json(message)
-            print(f"✅ 파일 전송 성공: {file_path} ({event_type})")
+            
+            # 상세한 전송 정보 출력
+            print(f"📤 [SEND -> file_preprocessor] 파일 전송 성공: {file_path}")
+            print(f"   📋 이벤트 타입: {event_type}")
+            print(f"   👤 사용자: {self.user_id}")
+            print(f"   📅 타임스탬프: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(message['timestamp']))}")
+            
+            if event_type != 'delete':
+                file_size = message.get('file_size', 0)
+                print(f"   📏 파일 크기: {file_size:,} bytes")
+                print(f"   🔒 Base64 인코딩: {'✅' if message.get('file_content') else '❌'}")
+            
+            print(f"   🌿 Git 커밋: {'✅' if commit_success else '❌'}")
+            
             if diff_info:
-                print(f"   📊 Diff 정보 포함: {diff_info['type']}")
+                print(f"   📊 Diff 정보: {diff_info['type']} ({len(diff_info['diff'])} chars)")
+            
+            print(f"   🚀 전송 포트: tcp://localhost:{self.push_port}")
+            print("   " + "-" * 50)
                 
         except Exception as e:
             print(f"❌ 파일 전송 중 오류 발생: {e}")
@@ -242,6 +258,22 @@ class FileWatcher:
                         b'',
                         json.dumps(response).encode('utf-8')
                     ])
+                    
+                    # 응답 전송 로그 출력
+                    if response.get('status') == 'success':
+                        file_name = response.get('file_name', 'Unknown')
+                        file_size = response.get('file_size', 0)
+                        print(f"📤 [RESPONSE -> {client_id.decode()[:8]}...] 파일 요청 응답 전송")
+                        print(f"   📄 파일명: {file_name}")
+                        print(f"   📏 파일 크기: {file_size:,} bytes")
+                        print(f"   🔒 Base64 인코딩: ✅")
+                        print(f"   🚀 응답 포트: tcp://*:{self.router_port}")
+                        print("   " + "-" * 50)
+                    else:
+                        error_msg = response.get('error', 'Unknown error')
+                        print(f"❌ [ERROR RESPONSE -> {client_id.decode()[:8]}...] 파일 요청 실패")
+                        print(f"   ⚠️ 오류: {error_msg}")
+                        print("   " + "-" * 50)
                     
             except Exception as e:
                 if self.router_running:  # 종료 중이 아닌 경우에만 에러 출력
@@ -368,7 +400,7 @@ class FileWatcher:
 def main():
     """메인 실행 함수"""
     # 설정값들 (필요에 따라 수정)
-    WATCH_FOLDER = "./watch_folder"
+    WATCH_FOLDER = "./test_files"
     PUSH_PORT = 5555  # 파일 변경사항 전송용 (PUSH 소켓)
     ROUTER_PORT = 5556  # 파일 요청 처리용 (ROUTER 소켓)
     

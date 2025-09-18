@@ -44,3 +44,6 @@ MANIFEST
 # OS
 .DS_Store
 Thumbs.db
+
+#db
+chroma/
