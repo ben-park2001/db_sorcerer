@@ -10,6 +10,11 @@
 # Gemini 로 바이브 코딩, 딱 봤을때 문제는 없는듯 (20250915 19:39)
 # 그런데 여기선 file path 를 받는데 FE에서 drag drop 받아와서 해야될듯
 
+import os
+from docx import Document
+import pdfplumber
+from pyhwpx import Hwp
+
 
 def read_file(file_path: str) -> str:
     """
@@ -26,8 +31,6 @@ def read_file(file_path: str) -> str:
         FileNotFoundError: 파일이 존재하지 않을 경우 발생합니다.
         ValueError: 지원하지 않는 파일 형식일 경우 발생합니다.
     """
-    import os
-
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"오류: '{file_path}' 파일을 찾을 수 없습니다.")
 
@@ -58,8 +61,13 @@ def read_file(file_path: str) -> str:
                 full_text = '\n'.join(text_list)
 
         elif extension == '.hwp':
-            hwp = HWPReader(file_path)
-            full_text = hwp.get_text()
+            hwp = Hwp()
+            hwp.open(file_path)
+            hwp.MoveDocBegin()  # 문서 시작으로 이동
+            hwp.MoveSelDocEnd()  # 문서 끝까지 선택
+            full_text = hwp.GetTextFile("TEXT", "")
+            hwp.quit()  # 한글 프로그램 종료
+            del hwp  # 메모리에서 객체 명시적으로 해제
 
         else:
             raise ValueError(
