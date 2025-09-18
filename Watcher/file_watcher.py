@@ -9,26 +9,34 @@ import os
 import time
 import getpass
 import threading
+import json
+import base64
 from pathlib import Path
 
-import requests
+import zmq
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from flask import Flask, request, jsonify, send_file
 import git
 from git import Repo, InvalidGitRepositoryError
 
 
 class FileWatcher:
-    def __init__(self, watch_folder="./watch_folder", server_url="http://localhost:8000/upload", port=9000):
+    def __init__(self, watch_folder="./watch_folder", push_port=5555, router_port=5556):
         self.watch_folder = Path(watch_folder)
-        self.server_url = server_url
-        self.port = port
+        self.push_port = push_port
+        self.router_port = router_port
         self.user_id = getpass.getuser()
         
-        # Flask 앱 설정
-        self.app = Flask(__name__)
-        self._setup_routes()
+        # ZeroMQ context 생성
+        self.context = zmq.Context()
+        
+        # PUSH 소켓 (파일 변경사항 전송용)
+        self.push_socket = self.context.socket(zmq.PUSH)
+        self.push_socket.connect(f"tcp://localhost:{self.push_port}")
+        
+        # ROUTER 소켓 (파일 요청 처리용)
+        self.router_socket = self.context.socket(zmq.ROUTER)
+        self.router_socket.bind(f"tcp://*:{self.router_port}")
         
         # 감시 대상 파일 확장자
         self.allowed_extensions = {'.docx', '.pdf', '.hwp', '.txt'}
@@ -40,12 +48,9 @@ class FileWatcher:
         self.repo = None
         self._init_git_repo()
         
-    def _setup_routes(self):
-        """Flask 라우트 설정"""
-        @self.app.route('/get_file', methods=['GET'])
-        def get_file():
-            return self._handle_file_request()
-    
+        # Router 처리를 위한 스레드 플래그
+        self.router_running = False
+        
     def _init_git_repo(self):
         """Git 저장소 초기화"""
         try:
@@ -170,53 +175,84 @@ class FileWatcher:
             # Git 커밋 수행
             commit_success = self._commit_file_change(file_path, event_type)
             
+            # 전송할 메시지 구성
+            message = {
+                'event_type': event_type,
+                'user_id': self.user_id,
+                'file_path': str(file_path),
+                'git_committed': commit_success,
+                'timestamp': time.time()
+            }
+            
             if event_type == 'delete':
                 # 삭제 이벤트: 메타데이터만 전송
-                data = {
-                    'event_type': event_type,
-                    'user_id': self.user_id,
-                    'file_path': str(file_path),
-                    'git_committed': str(commit_success)
-                }
-                response = requests.post(self.server_url, data=data)
+                message['file_content'] = None
             else:
-                # 생성/수정 이벤트: 파일과 함께 전송
-                if not os.path.exists(file_path):
+                # 생성/수정 이벤트: 파일 내용을 base64로 인코딩하여 전송
+                if os.path.exists(file_path):
+                    try:
+                        with open(file_path, 'rb') as file:
+                            file_content = file.read()
+                            message['file_content'] = base64.b64encode(file_content).decode('utf-8')
+                            message['file_size'] = len(file_content)
+                    except Exception as e:
+                        print(f"⚠️ 파일 읽기 실패: {e}")
+                        message['file_content'] = None
+                else:
                     print(f"파일을 찾을 수 없습니다: {file_path}")
                     return
-                
-                with open(file_path, 'rb') as file:
-                    files = {'file': file}
-                    data = {
-                        'event_type': event_type,
-                        'user_id': self.user_id,
-                        'git_committed': str(commit_success)
-                    }
-                    
-                    # diff 정보가 있으면 추가
-                    if diff_info:
-                        data['diff_type'] = diff_info['type']
-                        data['diff_content'] = diff_info['diff']
-                        data['relative_path'] = diff_info['file_path']
-                    
-                    response = requests.post(self.server_url, files=files, data=data)
             
-            if response.status_code == 200:
-                print(f"✅ 파일 전송 성공: {file_path} ({event_type})")
-                if diff_info:
-                    print(f"   📊 Diff 정보 포함: {diff_info['type']}")
-            else:
-                print(f"❌ 파일 전송 실패: {response.status_code}")
+            # diff 정보가 있으면 추가
+            if diff_info:
+                message['diff_type'] = diff_info['type']
+                message['diff_content'] = diff_info['diff']
+                message['relative_path'] = diff_info['file_path']
+            
+            # ZeroMQ PUSH로 메시지 전송
+            self.push_socket.send_json(message)
+            print(f"✅ 파일 전송 성공: {file_path} ({event_type})")
+            if diff_info:
+                print(f"   📊 Diff 정보 포함: {diff_info['type']}")
                 
         except Exception as e:
             print(f"❌ 파일 전송 중 오류 발생: {e}")
     
-    def _handle_file_request(self):
-        """파일 요청 처리"""
+    def _handle_file_request_router(self):
+        """ZeroMQ ROUTER 소켓으로 파일 요청 처리"""
+        self.router_running = True
+        print(f"🚀 파일 요청 서버 시작: tcp://*:{self.router_port}")
+        
+        while self.router_running:
+            try:
+                # 메시지 수신 (non-blocking with timeout)
+                if self.router_socket.poll(timeout=1000):  # 1초 타임아웃
+                    # [client_id, empty, request_message]
+                    client_id = self.router_socket.recv()
+                    empty = self.router_socket.recv()
+                    request_data = self.router_socket.recv_json()
+                    
+                    print(f"📥 파일 요청 수신: {request_data}")
+                    
+                    # 응답 메시지 구성
+                    response = self._process_file_request(request_data)
+                    
+                    # 클라이언트에게 응답 전송
+                    self.router_socket.send_multipart([
+                        client_id,
+                        b'',
+                        json.dumps(response).encode('utf-8')
+                    ])
+                    
+            except Exception as e:
+                if self.router_running:  # 종료 중이 아닌 경우에만 에러 출력
+                    print(f"❌ 파일 요청 처리 중 오류: {e}")
+    
+    def _process_file_request(self, request_data):
+        """파일 요청 처리 로직"""
         try:
-            file_path = request.args.get('file_path')
+            file_path = request_data.get('file_path')
             if not file_path:
-                return jsonify({'error': '파일 경로가 필요합니다'}), 400
+                return {'error': '파일 경로가 필요합니다', 'status': 'error'}
             
             # 절대 경로로 변환
             full_path = Path(file_path)
@@ -225,18 +261,29 @@ class FileWatcher:
             
             # 파일 존재 확인
             if not full_path.exists():
-                return jsonify({'error': '파일을 찾을 수 없습니다'}), 404
+                return {'error': '파일을 찾을 수 없습니다', 'status': 'error'}
             
             # 대상 파일 확인
             if not self._is_target_file(str(full_path)):
-                return jsonify({'error': '지원하지 않는 파일 형식입니다'}), 400
+                return {'error': '지원하지 않는 파일 형식입니다', 'status': 'error'}
             
-            print(f"📤 파일 요청 처리: {full_path}")
-            return send_file(str(full_path), as_attachment=True)
+            # 파일 읽기 및 base64 인코딩
+            with open(full_path, 'rb') as file:
+                file_content = file.read()
+                encoded_content = base64.b64encode(file_content).decode('utf-8')
+            
+            print(f"📤 파일 요청 처리 완료: {full_path}")
+            return {
+                'status': 'success',
+                'file_path': str(full_path),
+                'file_content': encoded_content,
+                'file_size': len(file_content),
+                'file_name': full_path.name
+            }
             
         except Exception as e:
             print(f"❌ 파일 요청 처리 중 오류: {e}")
-            return jsonify({'error': str(e)}), 500
+            return {'error': str(e), 'status': 'error'}
     
     def start_watching(self):
         """파일 감시 시작"""
@@ -267,10 +314,11 @@ class FileWatcher:
         self.observer.start()
         print(f"👀 폴더 감시 시작: {self.watch_folder}")
     
-    def start_server(self):
-        """HTTP 서버 시작"""
-        print(f"🚀 파일 요청 서버 시작: http://localhost:{self.port}")
-        self.app.run(host='localhost', port=self.port, debug=False, use_reloader=False)
+    def start_router_server(self):
+        """ZeroMQ ROUTER 서버 시작"""
+        router_thread = threading.Thread(target=self._handle_file_request_router, daemon=True)
+        router_thread.start()
+        return router_thread
     
     def start(self):
         """전체 시스템 시작"""
@@ -281,15 +329,15 @@ class FileWatcher:
         # 파일 감시 시작
         self.start_watching()
         
-        # HTTP 서버를 별도 스레드에서 시작
-        server_thread = threading.Thread(target=self.start_server, daemon=True)
-        server_thread.start()
+        # ZeroMQ Router 서버를 별도 스레드에서 시작
+        router_thread = self.start_router_server()
         
         try:
             print("\n📋 사용 방법:")
             print(f"  • 감시 폴더: {self.watch_folder}")
             print(f"  • 지원 파일: {', '.join(self.allowed_extensions)}")
-            print(f"  • 파일 요청: GET http://localhost:{self.port}/get_file?file_path=파일경로")
+            print(f"  • 파일 변경사항 전송: PUSH tcp://localhost:{self.push_port}")
+            print(f"  • 파일 요청 처리: ROUTER tcp://*:{self.router_port}")
             if self.repo:
                 print(f"  • Git 저장소: 활성화됨")
                 print(f"  • Git 브랜치: {self.repo.active_branch.name}")
@@ -303,24 +351,32 @@ class FileWatcher:
                 
         except KeyboardInterrupt:
             print("\n\n🛑 시스템 종료 중...")
+            self.router_running = False
             self.observer.stop()
             print("✅ 감시 종료 완료")
         
         self.observer.join()
+        if router_thread.is_alive():
+            router_thread.join(timeout=1)
+        
+        # ZeroMQ 정리
+        self.push_socket.close()
+        self.router_socket.close()
+        self.context.term()
 
 
 def main():
     """메인 실행 함수"""
     # 설정값들 (필요에 따라 수정)
     WATCH_FOLDER = "./watch_folder"
-    SERVER_URL = "http://localhost:8000/upload"
-    PORT = 9000
+    PUSH_PORT = 5555  # 파일 변경사항 전송용 (PUSH 소켓)
+    ROUTER_PORT = 5556  # 파일 요청 처리용 (ROUTER 소켓)
     
     # FileWatcher 인스턴스 생성 및 시작
     watcher = FileWatcher(
         watch_folder=WATCH_FOLDER,
-        server_url=SERVER_URL,
-        port=PORT
+        push_port=PUSH_PORT,
+        router_port=ROUTER_PORT
     )
     
     watcher.start()
