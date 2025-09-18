@@ -1,21 +1,24 @@
-import numpy as np
+# import numpy as np
 
 
 
-def Reranker(query, chunks):
-    scores = np.zeros(len(chunks))
-    return scores
+# def Reranker(query, chunks):
+#     scores = np.zeros(len(chunks))
+#     return scores
 
 
 
 import requests
 import json
 
-def rerank_documents(query, documents, model="Qwen/Qwen3-Reranker-0.6B", top_n=None):
+model="Qwen/Qwen3-Reranker-0.6B"
+server_url="http://inputnameplz.iptime.org:12347"
+
+def Reranker(query, documents,top_n=None):
     """
     vLLM 서버의 rerank API를 사용하여 문서를 재정렬합니다.
     """
-    url = "http://localhost:12347/v1/rerank"
+    url = server_url+"/v1/rerank"
     
     payload = {
         "model": model,
@@ -32,12 +35,7 @@ def rerank_documents(query, documents, model="Qwen/Qwen3-Reranker-0.6B", top_n=N
     
     response = requests.post(url, json=payload, headers=headers)
     
-    if response.status_code == 200:
-        return response.json()
-    else:
-        print(f"Error: {response.status_code}")
-        print(f"Response: {response.text}")
-        return None
+    return response.json()
 
 # 사용 예시
 # query = "파이썬 프로그래밍 학습"
@@ -57,7 +55,7 @@ documents = [
     "HTML and CSS are markup languages for creating web pages",
     "Python offers excellent libraries like pandas, numpy, and scikit-learn for data science"
 ]
-result = rerank_documents(query, documents, top_n=3)
+result = Reranker(query, documents, top_n=3)
 print(result)
 if result:
     print("Reranking 결과:")

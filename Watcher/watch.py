@@ -5,7 +5,7 @@ from watchdog.events import FileSystemEventHandler
 import time
 import os
 import getpass
-from fetch import send_file  # fetch 모듈에서 함수 임포트
+from send import send_file  # fetch 모듈에서 함수 임포트
 
 class FolderHandler(FileSystemEventHandler):
     def is_target_file(self, file_path):
