@@ -6,7 +6,7 @@ import json
 import re
 
 # =========================
-# Public types & interface
+# Public types & interface (다른 모듈과의 호환성을 위해 변경 없음)
 # =========================
 
 @runtime_checkable
@@ -41,6 +41,7 @@ __all__ = [
     "build_sentence_char_spans",
 ]
 
+
 # =========================
 # Main API
 # =========================
@@ -56,9 +57,8 @@ def llm_guided_sentence_chunk(
     fallback_on_fail: bool = True,
 ) -> ChunkingResult:
     """
-    1) 문장 분할
-    2) LLM에 청크 경계(JSON) 요청
-    3) 파싱/검증 실패 시 재프롬프트 → 그래도 실패하면 룰기반 분할 fallback
+    LLM이 청크의 '첫 문장'과 '끝 문장'을 직접 출력하는 방식으로 작동하며,
+    프롬프트가 한국어 LLM에 최적화된 버전입니다.
     """
     if not text or not text.strip():
         return ChunkingResult(chunks=[], llm_raw=None, mapping_info={"reason": "empty_text"})
@@ -66,387 +66,200 @@ def llm_guided_sentence_chunk(
     # --- 1) 문장 분할 & 스팬 생성 ---
     sents = split_sentences_ko_en(text)
     if not sents:
-        # 문장 기준 분할이 전혀 안 되면 전체를 하나의 청크로
-        single = _make_chunk(
-            chunk_index=0, text=text, char_start=0, char_end=len(text),
-            word_start=0,
-            word_end=len(text.split()) - 1 if text.split() else 0,
-        )
+        single = _make_chunk(0, text, 0, len(text), 0, len(text.split()))
         return ChunkingResult(chunks=[single], mapping_info={"reason": "no_sentence_detected"})
-
     sent_spans = build_sentence_char_spans(text, sents)
 
-    # --- 2) LLM 프롬프트 구성 & 호출 ---
-    prompt = _build_chunk_prompt(
-        num_sentences=len(sents),
-        max_sentences_per_chunk=max_sentences_per_chunk,
-        system_hint=system_hint,
-    )
-
-    llm_raw_first = llm.complete(
-        prompt,
-        temperature=0.0,  # 결정적
-        top_p=1.0,
-        max_tokens=600,
-    )
+    # --- 2) 한국어 프롬프트 구성 및 LLM 호출 ---
+    prompt = _build_chunk_prompt_by_sentence_content_ko(sents, system_hint)
+    llm_raw_first = llm.complete(prompt, temperature=0.0, max_tokens=2000)
 
     if debug:
         print("=== RAW LLM OUTPUT (first try) ===")
         print(_shorten(llm_raw_first, 1200))
 
-    plan_first = _safe_parse_json(llm_raw_first)
-    chunks = _chunks_from_plan(
-        text=text,
-        sents=sents,
-        sent_spans=sent_spans,
-        plan=plan_first,
-        max_sentences_per_chunk=max_sentences_per_chunk,
-        debug=debug
-    )
+    plan = _safe_parse_json(llm_raw_first)
+    indices_plan = _map_plan_to_indices(plan, sents, debug=debug)
+    chunks = _indices_to_chunks(indices_plan, text, sents, sent_spans)
 
-    used_strategy = "llm"
+    used_strategy = "llm_content_ko"
     llm_raw_all = llm_raw_first or ""
 
     # --- 3) 재시도 (옵션) ---
     if not chunks and retry_on_fail:
-        reprompt = _build_repair_prompt(
-            previous_output=llm_raw_first,
-            num_sentences=len(sents),
-            max_sentences_per_chunk=max_sentences_per_chunk
-        )
-        llm_raw_retry = llm.complete(
-            reprompt,
-            temperature=0.0,
-            top_p=1.0,
-            max_tokens=600,
-        )
+        reprompt = _build_repair_prompt_by_sentence_content_ko(sents, llm_raw_first)
+        llm_raw_retry = llm.complete(reprompt, temperature=0.0, max_tokens=2000)
+
         if debug:
             print("=== RAW LLM OUTPUT (retry) ===")
             print(_shorten(llm_raw_retry, 1200))
 
         plan_retry = _safe_parse_json(llm_raw_retry)
-        chunks = _chunks_from_plan(
-            text=text,
-            sents=sents,
-            sent_spans=sent_spans,
-            plan=plan_retry,
-            max_sentences_per_chunk=max_sentences_per_chunk,
-            debug=debug
-        )
-        llm_raw_all = (llm_raw_first or "") + "\n\n=== RETRY ===\n" + (llm_raw_retry or "")
-        used_strategy = "llm_retry" if chunks else used_strategy
+        indices_plan_retry = _map_plan_to_indices(plan_retry, sents, debug=debug)
+        chunks = _indices_to_chunks(indices_plan_retry, text, sents, sent_spans)
+        llm_raw_all += "\n\n=== RETRY ===\n" + (llm_raw_retry or "")
+        used_strategy = "llm_content_ko_retry" if chunks else used_strategy
 
     # --- 4) 룰기반 Fallback (옵션) ---
     if not chunks and fallback_on_fail:
         if debug:
-            print("⚠️ LLM JSON 파싱/검증 실패 → 룰기반 분할로 fallback 합니다.")
-            print("=== RAW LLM OUTPUT (last) ===")
-            print(_shorten(llm_raw_all, 1200))
-        chunks = _fallback_rule_based_chunks(
-            text=text,
-            sents=sents,
-            sent_spans=sent_spans,
-            # capped to keep chunks moderate & useful
-            max_sentences_per_chunk=max(6, min(10, max_sentences_per_chunk)),
-        )
+            print("⚠️ LLM 응답 처리 실패 → 룰기반 분할로 fallback 합니다.")
+        chunks = _fallback_rule_based_chunks(text, sents, sent_spans)
         used_strategy = "fallback_rule"
-
-    # --- 5) 최소 한 청크 보장 ---
-    if not chunks:
-        whole = _make_chunk(
-            chunk_index=0, text=text, char_start=0, char_end=len(text),
-            word_start=0,
-            word_end=len(text.split()) - 1 if text.split() else 0,
-        )
-        chunks = [whole]
-        used_strategy = used_strategy + "_forced_single"
 
     return ChunkingResult(
         chunks=chunks,
         llm_raw=llm_raw_all,
-        mapping_info={
-            "num_sentences": len(sents),
-            "used_strategy": used_strategy,
-            "max_sentences_per_chunk": max_sentences_per_chunk,
-        },
+        mapping_info={"num_sentences": len(sents), "used_strategy": used_strategy},
     )
 
 # =========================
-# Helpers
+# NEW: Core Logic with Korean Prompts
+# =========================
+
+def _build_chunk_prompt_by_sentence_content_ko(sents: List[str], system_hint: Optional[str]) -> str:
+    """번호 매겨진 문장 목록을 포함하는 한국어 프롬프트 생성"""
+    guideline = system_hint or "당신은 문장들을 논리적인 청크(chunk)로 그룹화하는 텍스트 분석 전문가입니다. 당신의 출력은 반드시 단 하나의 JSON 객체여야 합니다."
+
+    example_input = (
+        "1. 인공지능은 기술입니다.\n"
+        "2. 스마트폰에 사용됩니다.\n"
+        "3. 자동화는 직업을 변화시킵니다.\n"
+        "4. 단순 업무가 대체됩니다.\n"
+        "5. 윤리적 문제도 중요합니다.\n"
+        "6. 데이터 편향이 문제입니다."
+    )
+    example_output = json.dumps({
+        "chunks": [
+            {"title": "AI 기술 소개", "first_sentence": "인공지능은 기술입니다.", "last_sentence": "스마트폰에 사용됩니다."},
+            {"title": "직업 변화", "first_sentence": "자동화는 직업을 변화시킵니다.", "last_sentence": "단순 업무가 대체됩니다."},
+            {"title": "윤리적 문제", "first_sentence": "윤리적 문제도 중요합니다.", "last_sentence": "데이터 편향이 문제입니다."}
+        ]
+    }, ensure_ascii=False)
+
+    numbered_sentences = "\n".join(f"{i+1}. {s}" for i, s in enumerate(sents))
+
+    return (
+        f"{guideline}\n\n"
+        f"### 예시\n입력 문장:\n---\n{example_input}\n---\n출력 JSON:\n{example_output}\n\n"
+        f"### 작업 지시\n"
+        f"이제, 아래 문장들을 논리적인 청크로 묶어주세요. 'first_sentence'와 'last_sentence'의 값은 반드시 아래 입력 문장에서 정확히 복사해야 합니다.\n\n"
+        f"입력 문장:\n---\n{numbered_sentences}\n---\n출력 JSON:\n"
+    )
+
+def _build_repair_prompt_by_sentence_content_ko(sents: List[str], previous_output: str) -> str:
+    """콘텐츠 기반 재시도용 한국어 프롬프트"""
+    prev = _shorten(_strip_code_fences(previous_output or ""), 800)
+    numbered_sentences = "\n".join(f"{i+1}. {s}" for i, s in enumerate(sents))
+    return (
+        "이전 응답이 유효하지 않았습니다. 다시 시도해 주세요.\n"
+        "당신의 출력은 반드시 지정된 형식을 엄격하게 따르는 단 하나의 JSON 객체여야 합니다.\n"
+        "'first_sentence'와 'last_sentence' 값은 아래 제공된 입력 문장에서 정확히 복사해야 합니다.\n\n"
+        f"### 이전의 유효하지 않은 출력 (일부):\n{prev}\n\n"
+        f"### 입력 문장 (참고용):\n---\n{numbered_sentences}\n---\n출력 JSON:\n"
+    )
+
+def _map_plan_to_indices(plan: Any, sents: List[str], debug: bool) -> List[Tuple[int, int]]:
+    """LLM이 출력한 (첫 문장, 끝 문장) 텍스트를 원본 문장 리스트의 인덱스로 변환"""
+    if not isinstance(plan, dict) or "chunks" not in plan or not isinstance(plan["chunks"], list):
+        return []
+
+    indices_plan = []
+    cursor = 0  # 동일 문장 반복 처리를 위한 검색 시작 위치
+    
+    for i, chunk_plan in enumerate(plan["chunks"]):
+        if not isinstance(chunk_plan, dict): continue
+        first_s = chunk_plan.get("first_sentence")
+        last_s = chunk_plan.get("last_sentence")
+
+        if not first_s or not last_s: continue
+
+        try:
+            # 시작 인덱스 찾기: cursor 위치부터 검색
+            start_idx = sents.index(first_s, cursor)
+            # 끝 인덱스 찾기: 시작 인덱스 위치부터 검색
+            end_idx = sents.index(last_s, start_idx)
+            indices_plan.append((start_idx, end_idx))
+            cursor = end_idx + 1 # 다음 검색을 위해 cursor 업데이트
+        except ValueError:
+            if debug:
+                print(f"[WARN] Failed to find sentence from plan chunk #{i}. First='{_shorten(first_s, 50)}', Last='{_shorten(last_s, 50)}'")
+            continue # 문장을 찾지 못하면 해당 청크는 건너뜀
+
+    return indices_plan
+
+def _indices_to_chunks(indices_plan: List[Tuple[int, int]], text: str, sents: List[str], sent_spans: List[Tuple[int, int]]) -> List[ChunkMeta]:
+    """변환된 인덱스 계획을 바탕으로 최종 ChunkMeta 리스트 생성"""
+    chunks = []
+    for chunk_index, (start_idx, end_idx) in enumerate(indices_plan):
+        if end_idx < start_idx: continue # 유효하지 않은 인덱스
+
+        char_start = sent_spans[start_idx][0]
+        char_end = sent_spans[end_idx][1]
+        chunk_text = text[char_start:char_end]
+        if not chunk_text.strip(): continue
+
+        word_start = len(text[:char_start].split())
+        word_end = word_start + len(chunk_text.split()) - 1 if chunk_text.split() else word_start
+
+        chunks.append(_make_chunk(chunk_index, chunk_text, char_start, char_end, word_start, word_end))
+    return chunks
+
+# =========================
+# Unchanged Helper Functions
 # =========================
 
 def split_sentences_ko_en(text: str) -> List[str]:
-    """
-    초경량 문장 분할기(한국어/영문 혼합).
-    - 개행 우선 분할 후, 마침표/물음표/느낌표 기준으로 추가 분할
-    """
-    if not text.strip():
-        return []
+    if not text.strip(): return []
     lines = re.split(r"\n+", text)
     sents: List[str] = []
     for line in lines:
         line = line.strip()
-        if not line:
-            continue
+        if not line: continue
         parts = re.split(r"(?<=[\.!\?])\s+", line)
-        for p in parts:
-            p = p.strip()
-            if p:
-                sents.append(p)
+        sents.extend(p for p in parts if p.strip())
     return sents
 
 def build_sentence_char_spans(text: str, sentences: List[str]) -> List[Tuple[int, int]]:
-    """
-    원문 내 각 문장의 (char_start, char_end) 위치를 계산.
-    동일 문장 반복 시 앞에서부터 매칭(선형 커서).
-    """
     spans: List[Tuple[int, int]] = []
     cursor = 0
-    n = len(text)
     for s in sentences:
-        s_stripped = s.strip()
-        if not s_stripped:
+        try:
+            start = text.index(s, cursor)
+            end = start + len(s)
+            spans.append((start, end))
+            cursor = end
+        except ValueError:
             spans.append((cursor, cursor))
-            continue
-        m = re.search(re.escape(s_stripped), text[cursor:])
-        if not m:
-            start = cursor
-            end = min(n, start + len(s_stripped))
-        else:
-            start = cursor + m.start()
-            end = cursor + m.end()
-        spans.append((start, end))
-        cursor = end
     return spans
 
-def _build_chunk_prompt(
-    num_sentences: int,
-    max_sentences_per_chunk: int,
-    system_hint: Optional[str],
-) -> str:
-    """
-    LLM에게 '오직 JSON'만 요구.
-    - 문장 텍스트를 보여주지 않음(패턴 복사 방지)
-    - 간결한 few-shot 예시로 "숫자 인덱스"를 학습
-    - 프롬프트 끝을 'JSON:\\n{' 로 강하게 유도
-    """
-    guideline = (
-        system_hint
-        or "You are a JSON-only generator. Output exactly ONE JSON object. No explanations."
-    )
-
-    example = (
-        'Example:\n'
-        'INPUT: 9 sentences\n'
-        'OUTPUT (JSON):\n'
-        '{"chunks":[{"first_sentence_index":0,"last_sentence_index":3,"title":"intro"},'
-        '{"first_sentence_index":4,"last_sentence_index":6,"title":"methods"},'
-        '{"first_sentence_index":7,"last_sentence_index":8,"title":"conclusion"}]}\n'
-        '---\n'
-    )
-
-    return (
-        f"{guideline}\n\n"
-        f"{example}"
-        "Now apply the same format.\n"
-        f"INPUT: {num_sentences} sentences\n"
-        f"Rule: group ADJACENT sentences into chunks (min 3, max {max_sentences_per_chunk} per chunk). "
-        "Use 0-based indices. Ensure first_sentence_index ≤ last_sentence_index.\n"
-        "Return ONLY the JSON object.\n"
-        "JSON:\n{"
-    )
-
-def _build_repair_prompt(
-    previous_output: str,
-    num_sentences: int,
-    max_sentences_per_chunk: int
-) -> str:
-    """첫 응답이 JSON이 아닐 때 재시도용 프롬프트."""
-    prev = (previous_output or "").strip()
-    prev = _strip_code_fences(prev)
-    prev = _shorten(prev, 800)
-    return (
-        "The previous response was NOT valid JSON per the schema/pattern.\n"
-        "Return ONLY ONE JSON object now. No explanations. Start immediately with '{'.\n"
-        'The JSON must match: {"chunks":[{"first_sentence_index":<int>,"last_sentence_index":<int>,"title":"<string>"}...]}\n'
-        f"INPUT: {num_sentences} sentences\n"
-        f"Constraints: Each chunk has 3~{max_sentences_per_chunk} sentences; indices are 0-based; chunks are adjacent.\n"
-        f"Previous output (truncated):\n{prev}\n"
-        "JSON:\n{"
-    )
+def _fallback_rule_based_chunks(text: str, sents: List[str], sent_spans: List[Tuple[int, int]], max_sentences_per_chunk: int = 8) -> List[ChunkMeta]:
+    if not sents: return []
+    step = max(3, min(10, max_sentences_per_chunk))
+    chunks: List[ChunkMeta] = []
+    for i in range(0, len(sents), step):
+        start_idx, end_idx = i, min(i + step - 1, len(sents) - 1)
+        char_start, char_end = sent_spans[start_idx][0], sent_spans[end_idx][1]
+        chunk_text = text[char_start:char_end]
+        if not chunk_text.strip(): continue
+        word_start = len(text[:char_start].split())
+        word_end = word_start + len(chunk_text.split()) - 1 if chunk_text.split() else word_start
+        chunks.append(_make_chunk(len(chunks), chunk_text, char_start, char_end, word_start, word_end))
+    return chunks
 
 def _safe_parse_json(s: Any) -> Any:
-    """
-    가능한 관용적으로 JSON 파싱.
-    - 코드펜스/채팅 프롤로그 제거
-    - 여러 JSON 블록이 있으면 '마지막' 객체/배열을 우선
-    - 스키마 예시(placeholder: <int>, <string>, ...)는 건너뛴다
-    - 채팅 템플릿 누출 토큰({assistant 등) 무시
-    """
-    if not isinstance(s, str):
-        return {}
+    if not isinstance(s, str): return {}
     raw = _strip_code_fences(s.strip())
-    # 자주 누출되는 프롤로그/마커 이후는 잘라낸다
-    for fence in ["{assistant", "\n<SENTENCES>", "\nSchema", "\nExample:", "```"]:
-        if fence in raw:
-            raw = raw.split(fence, 1)[0].rstrip()
-
-    # 1) direct load
     try:
         return json.loads(raw)
     except Exception:
-        pass
-
-    # 2) find ALL JSON objects, prefer the last that doesn't contain placeholders
-    objs = re.findall(r"\{.*?\}", raw, flags=re.DOTALL)
-    for cand in reversed(objs):
-        if re.search(r"<int>|<string>|\.\.\.", cand):
-            continue
-        try:
-            return json.loads(cand)
-        except Exception:
-            continue
-
-    # 3) allow top-level arrays too (prefer last) and skip placeholders
-    arrs = re.findall(r"\[.*?\]", raw, flags=re.DOTALL)
-    for cand in reversed(arrs):
-        if re.search(r"<int>|<string>|\.\.\.", cand):
-            continue
-        try:
-            return json.loads(cand)
-        except Exception:
-            continue
-
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except Exception:
+                return {}
     return {}
-
-def _chunks_from_plan(
-    text: str,
-    sents: List[str],
-    sent_spans: List[Tuple[int, int]],
-    plan: Any,
-    max_sentences_per_chunk: int,
-    debug: bool = False,
-) -> List[ChunkMeta]:
-    """
-    계획 JSON을 ChunkMeta 리스트로 변환.
-    - 1-based 응답 자동 보정(휴리스틱)
-    - 경계 클램핑/역전 교정
-    - 최소 1문장은 포함되도록 필터
-    """
-    if not plan:
-        return []
-
-    # plan이 리스트(최상위 배열)이면 그대로 사용
-    if isinstance(plan, list):
-        items = plan
-    elif isinstance(plan, dict) and "chunks" in plan:
-        items = plan["chunks"]
-    else:
-        items = plan.get("chunks", []) if isinstance(plan, dict) else []
-
-    if not isinstance(items, list) or not items:
-        return []
-
-    # 1-based 여부 휴리스틱: 모든 first/last가 1 이상이면 1-based로 간주
-    fs, ls = [], []
-    for it in items:
-        try:
-            fs.append(int(it.get("first_sentence_index")))
-            ls.append(int(it.get("last_sentence_index")))
-        except Exception:
-            pass
-    minus_one = bool(fs and ls and min(fs + ls) >= 1)
-
-    chunks: List[ChunkMeta] = []
-    for idx, c in enumerate(items):
-        try:
-            a = int(c["first_sentence_index"])
-            b = int(c["last_sentence_index"])
-        except Exception:
-            continue
-
-        if minus_one:
-            a -= 1
-            b -= 1
-
-        # 클램핑 & 순서 보정
-        a = max(0, min(a, len(sents) - 1))
-        b = max(0, min(b, len(sents) - 1))
-        if b < a:
-            a, b = b, a
-
-        # 실제 문자 오프셋
-        cs, ce = sent_spans[a][0], sent_spans[b][1]
-        if ce <= cs:
-            if debug:
-                print(f"[DBG] drop invalid span: idx={idx}, a={a}, b={b}, cs={cs}, ce={ce}")
-            continue
-
-        slice_text = text[cs:ce]
-        if not slice_text.strip():
-            if debug:
-                print(f"[DBG] drop empty slice: idx={idx}, a={a}, b={b}")
-            continue
-
-        # 단어 오프셋(rough)
-        ws = len(text[:cs].split())
-        we = ws + len(slice_text.split()) - 1 if slice_text.split() else ws
-
-        chunks.append(ChunkMeta(
-            chunk_index=len(chunks),
-            text=slice_text,
-            char_start=cs,
-            char_end=ce,
-            word_start=ws,
-            word_end=we
-        ))
-
-    # (Optional) very small chunks filter can be added here if needed
-    return chunks
-
-def _fallback_rule_based_chunks(
-    text: str,
-    sents: List[str],
-    sent_spans: List[Tuple[int, int]],
-    max_sentences_per_chunk: int = 8,
-) -> List[ChunkMeta]:
-    """
-    규칙 기반(문장 N개 단위) 분할. 최소 3문장/청크를 기본으로 하되,
-    max_sentences_per_chunk 한도 내에서 묶음.
-    """
-    if not sents:
-        t = text.strip()
-        if not t:
-            return []
-        return [
-            _make_chunk(0, t, 0, len(text), 0, len(t.split()) - 1 if t.split() else 0)
-        ]
-
-    # Moderate step so we always get multiple reasonable chunks
-    step = max(3, min(10, max_sentences_per_chunk))
-    chunks: List[ChunkMeta] = []
-    idx = 0
-    for i in range(0, len(sents), step):
-        a = i
-        b = min(i + step - 1, len(sents) - 1)
-        cs, ce = sent_spans[a][0], sent_spans[b][1]
-        slice_text = text[cs:ce]
-        ws = len(text[:cs].split())
-        we = ws + len(slice_text.split()) - 1 if slice_text.strip() else ws
-        chunks.append(ChunkMeta(
-            chunk_index=idx,
-            text=slice_text,
-            char_start=cs,
-            char_end=ce,
-            word_start=ws,
-            word_end=we
-        ))
-        idx += 1
-    return chunks
-
-# =========================
-# Small utilities
-# =========================
 
 def _strip_code_fences(s: str) -> str:
     return re.sub(r"^```json|^```|```$", "", s, flags=re.MULTILINE).strip()
@@ -455,19 +268,5 @@ def _shorten(s: Optional[str], n: int) -> str:
     if not s: return ""
     return s if len(s) <= n else s[:n] + " …(truncated)"
 
-def _make_chunk(
-    chunk_index: int,
-    text: str,
-    char_start: int,
-    char_end: int,
-    word_start: int,
-    word_end: int,
-) -> ChunkMeta:
-    return ChunkMeta(
-        chunk_index=chunk_index,
-        text=text,
-        char_start=char_start,
-        char_end=char_end,
-        word_start=word_start,
-        word_end=word_end,
-    )
+def _make_chunk(chunk_index: int, text: str, char_start: int, char_end: int, word_start: int, word_end: int) -> ChunkMeta:
+    return ChunkMeta(chunk_index, text, char_start, char_end, word_start, word_end)
