@@ -32,7 +32,7 @@ class FileWatcher:
         
         # PUSH 소켓 (파일 변경사항 전송용)
         self.push_socket = self.context.socket(zmq.PUSH)
-        self.push_socket.connect(f"tcp://localhost:{self.push_port}")
+        self.push_socket.bind(f"tcp://localhost:{self.push_port}")
         
         # ROUTER 소켓 (파일 요청 처리용)
         self.router_socket = self.context.socket(zmq.ROUTER)

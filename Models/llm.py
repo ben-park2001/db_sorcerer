@@ -49,3 +49,6 @@ def LLM_small(message):
     else:
         print(f"LLM API 호출 실패: {response.status_code}")
         return ""
+    
+
+print(LLM("hello, who are you"))

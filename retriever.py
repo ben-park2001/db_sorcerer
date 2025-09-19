@@ -89,7 +89,9 @@ class FileRetriever:
     def _get_query_embedding(self, query: str) -> Optional[List[float]]:
         """query 문장의 embedding을 생성합니다."""
         try:
-            return Embedding(query)
+            embeddings = Embedding(query)
+            # Embedding() 함수는 리스트의 리스트를 반환하므로 첫 번째 요소만 가져옴
+            return embeddings[0] if embeddings and len(embeddings) > 0 else None
         except Exception as e:
             print(f"❌ Query embedding 생성 실패: {e}")
             return None
