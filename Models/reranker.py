@@ -56,5 +56,5 @@ def Reranker(query, documents, top_n=None):
             "relevance_score": score,
             "document": documents[idx]
         })
-    
+
     return {"results": results}

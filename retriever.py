@@ -168,9 +168,12 @@ class FileRetriever:
             
             # 4. Reranking으로 상위 n개 선별
             try:
-                reranked_chunks = Reranker(query, chunk_texts, top_n=top_n)
-                print(f"✅ 검색 완료: {len(reranked_chunks)}개 chunk 반환")
-                return reranked_chunks
+                reranked_chunks = Reranker(query, chunk_texts, top_n=top_n)['results']
+                raw_chunks = []
+                for chunk in reranked_chunks:
+                    raw_chunks.append(chunk['document'])
+                print(f"✅ 검색 완료: {len(raw_chunks)}개 chunk 반환")
+                return raw_chunks
             except Exception as e:
                 print(f"⚠️ Reranking 실패, 원본 순서로 반환: {e}")
                 return chunk_texts[:top_n]

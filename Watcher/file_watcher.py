@@ -167,6 +167,9 @@ class FileWatcher:
     def _send_file(self, file_path, event_type):
         """파일을 서버로 전송"""
         try:
+            # 절대 경로를 상대 경로로 변환
+            rel_path = os.path.relpath(file_path, self.watch_folder)
+            
             # Git diff 정보 수집 (update인 경우)
             diff_info = None
             if event_type == 'update':
@@ -179,7 +182,7 @@ class FileWatcher:
             message = {
                 'event_type': event_type,
                 'user_id': self.user_id,
-                'file_path': str(file_path),
+                'file_path': rel_path,
                 'git_committed': commit_success,
                 'timestamp': time.time()
             }
@@ -253,11 +256,25 @@ class FileWatcher:
                     response = self._process_file_request(request_data)
                     
                     # 클라이언트에게 응답 전송
-                    self.router_socket.send_multipart([
-                        client_id,
-                        b'',
-                        json.dumps(response).encode('utf-8')
-                    ])
+                    try:
+                        response_json = json.dumps(response, ensure_ascii=False)
+                        self.router_socket.send_multipart([
+                            client_id,
+                            b'',
+                            response_json.encode('utf-8')
+                        ])
+                    except Exception as json_error:
+                        print(f"❌ JSON 인코딩 오류: {json_error}")
+                        # 오류 응답 전송
+                        error_response = {
+                            'status': 'error',
+                            'error': f'JSON 인코딩 실패: {str(json_error)}'
+                        }
+                        self.router_socket.send_multipart([
+                            client_id,
+                            b'',
+                            json.dumps(error_response, ensure_ascii=False).encode('utf-8')
+                        ])
                     
                     # 응답 전송 로그 출력
                     if response.get('status') == 'success':
@@ -286,13 +303,23 @@ class FileWatcher:
             if not file_path:
                 return {'error': '파일 경로가 필요합니다', 'status': 'error'}
             
-            # 절대 경로로 변환
-            full_path = Path(file_path)
-            if not full_path.is_absolute():
-                full_path = self.watch_folder / file_path
+            # 받은 경로를 Path 객체로 변환
+            requested_path = Path(file_path)
+            
+            # 절대 경로인 경우 상대 경로로 변환
+            if requested_path.is_absolute():
+                try:
+                    requested_path = requested_path.relative_to(self.watch_folder)
+                except ValueError:
+                    # watch_folder 밖의 파일은 접근 불가
+                    return {'error': 'watch_folder 외부 파일에는 접근할 수 없습니다', 'status': 'error'}
+            
+            # watch_folder 기준으로 절대 경로 생성
+            full_path = self.watch_folder / requested_path
             
             # 파일 존재 확인
             if not full_path.exists():
+                print(f"❌ 파일을 찾을 수 없음: {full_path} (요청된 경로: {file_path})")
                 return {'error': '파일을 찾을 수 없습니다', 'status': 'error'}
             
             # 대상 파일 확인
@@ -304,7 +331,7 @@ class FileWatcher:
                 file_content = file.read()
                 encoded_content = base64.b64encode(file_content).decode('utf-8')
             
-            print(f"📤 파일 요청 처리 완료: {full_path}")
+            print(f"📤 파일 요청 처리 완료: {full_path} (상대경로: {requested_path})")
             return {
                 'status': 'success',
                 'file_path': str(full_path),
