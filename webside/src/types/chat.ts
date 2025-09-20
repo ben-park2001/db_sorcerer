@@ -57,6 +57,12 @@ export interface ChatContextType {
   setMode: (mode: 'normal' | 'deep' | 'deeper', sessionId?: string) => void;
 }
 
+// 중간 단계 정보 (텍스트와 해당 단계에서 사용된 소스 포함)
+export interface IntermediateStep {
+  text: string;
+  sources: SourceDocument[];
+}
+
 // 채팅 메시지 상태
 export interface Message {
   id: string;
@@ -64,5 +70,7 @@ export interface Message {
   role: 'user' | 'assistant';
   timestamp: Date;
   isError?: boolean;
-  sources?: SourceDocument[]; // 답변에 참고한 문서
+  sources?: SourceDocument[]; // 답변에 참고한 문서 (전체)
+  intermediateSteps?: IntermediateStep[]; // 중간 과정들 (각각 소스 포함)
+  finalAnswer?: string; // 최종 답변
 }

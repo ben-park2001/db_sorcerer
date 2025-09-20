@@ -18,6 +18,7 @@ import { sendChatMessageStream, checkServerHealth } from '@/lib/api';
 import { Message, RAGStatus, SourceDocument, StreamEvent } from '@/types/chat';
 import LoginScreen from './LoginScreen';
 import SourceDocuments from './SourceDocuments';
+import StepwiseSourceDocuments from './StepwiseSourceDocuments';
 import RAGStatusIndicator from './RAGStatusIndicator';
 import ChatHeader from './ChatHeader';
 import EmptyState from './EmptyState';
@@ -124,17 +125,34 @@ export default function ChatInterface() {
             setRagStatus(prev => ({ ...prev, stage: 'searching', message: `"${event.query}" 검색 중... (단계 ${event.iteration})` }));
             break;
           case 'search_results':
+            // RAG 상태 업데이트
             setRagStatus(prev => ({
               ...prev,
               stage: 'analyzing',
               message: `${event.count}개 문서 조각 발견. 분석 중...`,
               sources: [...prev.sources, ...event.results],
             }));
-            break;
-          case 'intermediate_answer':
+            // 메시지에도 즉시 소스 추가
             setMessages(prev => prev.map(msg => 
               msg.id === assistantMessageId 
-                ? { ...msg, content: event.answer }
+                ? { 
+                    ...msg, 
+                    sources: [...(msg.sources || []), ...event.results]
+                  }
+                : msg
+            ));
+            break;
+          case 'intermediate_answer':
+            // ragStatus에서 현재 소스들을 가져와서 단계별로 저장
+            setMessages(prev => prev.map(msg => 
+              msg.id === assistantMessageId 
+                ? { 
+                    ...msg, 
+                    intermediateSteps: [...(msg.intermediateSteps || []), {
+                      text: event.answer,
+                      sources: msg.sources ? msg.sources.slice() : [] // 메시지에 누적된 소스들 사용
+                    }]
+                  }
                 : msg
             ));
             setRagStatus(prev => ({ ...prev, stage: 'generating', message: '답변 생성 중...' }));
@@ -142,16 +160,15 @@ export default function ChatInterface() {
           case 'final_answer':
             setMessages(prev => prev.map(msg => 
               msg.id === assistantMessageId 
-                ? { ...msg, content: event.answer }
+                ? { 
+                    ...msg, 
+                    content: event.answer,
+                    finalAnswer: event.answer
+                  }
                 : msg
             ));
             break;
           case 'complete':
-            setMessages(prev => prev.map(msg => 
-              msg.id === assistantMessageId 
-                ? { ...msg, sources: ragStatus.sources }
-                : msg
-            ));
             setRagStatus({ isLoading: false, stage: 'complete', message: '완료', sources: [], finalAnswer: '' });
             setIsLoading(false);
             break;
@@ -230,10 +247,54 @@ export default function ChatInterface() {
                         <span className="text-sm text-red-600 dark:text-red-400 font-medium">오류</span>
                       </div>
                     )}
-                    <p className={`text-sm leading-relaxed whitespace-pre-wrap ${
-                      message.isError ? 'text-red-700 dark:text-red-300' : ''
-                    }`}>{message.content}</p>
-                    <SourceDocuments sources={message.sources || []} />
+                    
+                    {/* 중간 과정이 있는 경우 단계별로 표시 */}
+                    {message.role === 'assistant' && message.intermediateSteps && message.intermediateSteps.length > 0 && (
+                      <div className="space-y-3 mb-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <BrainCircuit className="w-4 h-4 text-blue-500" />
+                          <span className="text-sm font-medium text-blue-700 dark:text-blue-300">사고 과정</span>
+                        </div>
+                        {message.intermediateSteps.map((step, index) => (
+                          <div key={index} className="pl-4 border-l-2 border-blue-200 dark:border-blue-700">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-1 rounded-full">
+                                단계 {index + 1}
+                              </span>
+                            </div>
+                            <p className="text-sm leading-relaxed whitespace-pre-wrap text-gray-700 dark:text-gray-300">
+                              {step.text}
+                            </p>
+                            <StepwiseSourceDocuments sources={step.sources} stepNumber={index + 1} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    
+                    {/* 최종 답변이 있는 경우 구분해서 표시 */}
+                    {message.role === 'assistant' && message.finalAnswer && (
+                      <div className="border-t pt-3 mt-3 border-gray-200 dark:border-gray-700">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Bot className="w-4 h-4 text-green-500" />
+                          <span className="text-sm font-medium text-green-700 dark:text-green-300">최종 답변</span>
+                        </div>
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap font-medium">
+                          {message.finalAnswer}
+                        </p>
+                      </div>
+                    )}
+                    
+                    {/* 중간 과정이나 최종 답변이 없는 일반적인 경우 */}
+                    {(!message.intermediateSteps || message.intermediateSteps.length === 0) && !message.finalAnswer && (
+                      <p className={`text-sm leading-relaxed whitespace-pre-wrap ${
+                        message.isError ? 'text-red-700 dark:text-red-300' : ''
+                      }`}>{message.content}</p>
+                    )}
+                    
+                    {/* 중간 과정이 없는 경우에만 전체 소스 표시 */}
+                    {(!message.intermediateSteps || message.intermediateSteps.length === 0) && (
+                      <SourceDocuments sources={message.sources || []} />
+                    )}
                   </Card>
                   
                   <div className={`flex items-center gap-2 mt-2 px-1 ${
