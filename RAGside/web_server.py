@@ -12,17 +12,18 @@ app = Flask(__name__)
 # CORS 설정 - 프론트엔드에서 접근 가능하도록 설정
 CORS(app, origins=['http://localhost:3000', 'http://127.0.0.1:3000'])
 
-# RAGAgent 인스턴스 (전역으로 관리)
-rag_agent = None
+# RAGAgent 인스턴스들 (user_id별로 관리)
+rag_agents = {}
 
-def get_rag_agent(mode="deep"):
+def get_rag_agent(mode="deep", user_id="anonymous"):
     """RAGAgent 인스턴스를 가져오거나 생성"""
-    global rag_agent
-    if rag_agent is None or (hasattr(rag_agent, 'mode') and rag_agent.mode != mode):
-        if rag_agent:
-            rag_agent.close()
-        rag_agent = RAGAgent(mode=mode)
-    return rag_agent
+    global rag_agents
+    agent_key = f"{user_id}_{mode}"
+    
+    if agent_key not in rag_agents:
+        rag_agents[agent_key] = RAGAgent(mode=mode, user_id=user_id)
+    
+    return rag_agents[agent_key]
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
@@ -49,8 +50,13 @@ def chat():
         if mode not in ['normal', 'deep', 'deeper']:
             mode = 'deep'
         
+        # user_id 설정 (기본값: anonymous)
+        user_id = data.get('user_id', 'anonymous')
+        if not user_id or not user_id.strip():
+            user_id = 'anonymous'
+        
         # RAGAgent로 처리
-        agent = get_rag_agent(mode)
+        agent = get_rag_agent(mode, user_id)
         response = agent.process(user_message)
         
         return jsonify({
@@ -89,10 +95,12 @@ if __name__ == '__main__':
         )
     except KeyboardInterrupt:
         print("\n🛑 서버 종료 중...")
-        if rag_agent:
-            rag_agent.close()
+        # 모든 RAGAgent 인스턴스 종료
+        for agent in rag_agents.values():
+            agent.close()
         print("✅ 서버 종료 완료")
     except Exception as e:
         print(f"❌ 서버 시작 실패: {e}")
-        if rag_agent:
-            rag_agent.close()
+        # 모든 RAGAgent 인스턴스 종료
+        for agent in rag_agents.values():
+            agent.close()

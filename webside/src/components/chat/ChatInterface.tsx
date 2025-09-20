@@ -22,12 +22,81 @@ interface Message {
   isError?: boolean;
 }
 
+function LoginScreen({ onLogin }: { onLogin: (userId: string) => void }) {
+  const [userId, setUserId] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (userId.trim()) {
+      onLogin(userId.trim());
+    }
+  };
+
+  return (
+    <div className="h-screen w-full flex items-center justify-center bg-background">
+      <Card className="w-full max-w-md p-8">
+        <div className="text-center space-y-4 mb-8">
+          <Avatar className="w-16 h-16 mx-auto">
+            <AvatarFallback className="bg-primary/10">
+              <Bot className="w-8 h-8 text-primary" />
+            </AvatarFallback>
+          </Avatar>
+          <h1 className="text-2xl font-bold">DB Sorcerer</h1>
+          <p className="text-muted-foreground">
+            로그인하여 RAG 시스템을 사용해보세요
+          </p>
+        </div>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label htmlFor="userId" className="block text-sm font-medium mb-2">
+              사용자 ID
+            </label>
+            <Input
+              id="userId"
+              type="text"
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              placeholder="사용자 ID를 입력하세요"
+              required
+            />
+          </div>
+          
+          <div>
+            <label htmlFor="password" className="block text-sm font-medium mb-2">
+              비밀번호
+            </label>
+            <Input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="비밀번호를 입력하세요 (MVP용 - 아무값이나 입력)"
+            />
+          </div>
+          
+          <Button type="submit" className="w-full" disabled={!userId.trim()}>
+            로그인
+          </Button>
+        </form>
+        
+        <p className="text-xs text-muted-foreground text-center mt-4">
+          * MVP 버전입니다. 비밀번호는 검증하지 않습니다.
+        </p>
+      </Card>
+    </div>
+  );
+}
+
 export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [mode, setMode] = useState<'normal' | 'deep' | 'deeper'>('deep');
+  const [userId, setUserId] = useState<string>('');
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   // 서버 상태 확인
   useEffect(() => {
@@ -41,6 +110,31 @@ export default function ChatInterface() {
     
     return () => clearInterval(interval);
   }, []);
+
+  // 로컬 스토리지에서 user_id 복원
+  useEffect(() => {
+    const savedUserId = localStorage.getItem('db_sorcerer_user_id');
+    if (savedUserId) {
+      setUserId(savedUserId);
+      setIsLoggedIn(true);
+    }
+  }, []);
+
+  const handleLogin = (inputUserId: string) => {
+    const trimmedUserId = inputUserId.trim();
+    if (trimmedUserId) {
+      setUserId(trimmedUserId);
+      setIsLoggedIn(true);
+      localStorage.setItem('db_sorcerer_user_id', trimmedUserId);
+    }
+  };
+
+  const handleLogout = () => {
+    setUserId('');
+    setIsLoggedIn(false);
+    setMessages([]);
+    localStorage.removeItem('db_sorcerer_user_id');
+  };
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -60,6 +154,7 @@ export default function ChatInterface() {
       const response = await sendChatMessage({
         message: userMessage.content,
         mode: mode,
+        user_id: userId,
       });
 
       const assistantMessage: Message = {
@@ -92,6 +187,11 @@ export default function ChatInterface() {
     }
   };
 
+  // 로그인되지 않은 경우 로그인 화면 표시
+  if (!isLoggedIn) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
   return (
     <div className="flex flex-col h-screen bg-background">
       {/* Header */}
@@ -105,6 +205,20 @@ export default function ChatInterface() {
           </div>
           
           <div className="flex items-center gap-4">
+            {/* 사용자 정보 */}
+            <div className="hidden sm:flex items-center gap-2 text-sm">
+              <User className="w-4 h-4 text-muted-foreground" />
+              <span className="text-muted-foreground">{userId}</span>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={handleLogout}
+                className="text-xs"
+              >
+                로그아웃
+              </Button>
+            </div>
+            
             {/* 모드 선택 */}
             <div className="hidden sm:flex items-center gap-2">
               <span className="text-sm text-muted-foreground">모드:</span>
@@ -256,8 +370,22 @@ export default function ChatInterface() {
             </Alert>
           )}
           
-          {/* 모바일에서 모드 선택 */}
-          <div className="sm:hidden mb-3">
+          {/* 모바일에서 사용자 정보 및 모드 선택 */}
+          <div className="sm:hidden mb-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm">
+                <User className="w-4 h-4 text-muted-foreground" />
+                <span className="text-muted-foreground">{userId}</span>
+              </div>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={handleLogout}
+                className="text-xs"
+              >
+                로그아웃
+              </Button>
+            </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">모드:</span>
               <Select value={mode} onValueChange={(value) => setMode(value as typeof mode)} disabled={isLoading}>
