@@ -22,11 +22,12 @@ from accessDB import DummyAuthDB
 
 
 class FileWatcher:
-    def __init__(self, watch_folder, push_port=5555, router_port=5556, access_port=5559):
+    def __init__(self, watch_folder, push_port=5555, router_port=5556, access_port=5559, folder_access_port=5560):
         self.watch_folder = Path(watch_folder)
         self.push_port = push_port
         self.router_port = router_port
         self.access_port = access_port
+        self.folder_access_port = folder_access_port
         self.user_id = getpass.getuser()
         
         # ZeroMQ context 생성
@@ -44,6 +45,10 @@ class FileWatcher:
         self.rep_socket = self.context.socket(zmq.REP)
         self.rep_socket.bind(f"tcp://*:{self.access_port}")
         
+        # REP 소켓 (folder access 처리용 - 포트 5560)
+        self.folder_access_socket = self.context.socket(zmq.REP)
+        self.folder_access_socket.bind(f"tcp://*:{self.folder_access_port}")
+        
         # 감시 대상 파일 확장자
         self.allowed_extensions = {'.docx', '.pdf', '.hwp', '.txt'}
         
@@ -57,6 +62,7 @@ class FileWatcher:
         # Router 처리를 위한 스레드 플래그
         self.router_running = False
         self.access_running = False
+        self.folder_access_running = False
 
         self.auth_db = DummyAuthDB()
         
@@ -333,6 +339,34 @@ class FileWatcher:
                 if self.access_running:  # 종료 중이 아닌 경우에만 에러 출력
                     print(f"❌ access 요청 처리 중 오류: {e}")
     
+    def _handle_folder_access_request_rep(self):
+        """ZeroMQ REP 소켓으로 folder access 요청 처리 (포트 5560)"""
+        self.folder_access_running = True
+        print(f"🔑 folder access 서버 시작: tcp://*:{self.folder_access_port}")
+        
+        while self.folder_access_running:
+            try:
+                # 메시지 수신 (non-blocking with timeout)
+                if self.folder_access_socket.poll(timeout=1000):  # 1초 타임아웃
+                    request = self.folder_access_socket.recv_json()
+                    print(f"📥 folder access 요청 수신: {request}")
+                    
+                    # access 함수 호출
+                    user_id = request.get('user_id')
+                    if user_id:
+                        pathlist = self.access(user_id)
+                        response = {'status': 'success', 'pathlist': pathlist}
+                    else:
+                        response = {'status': 'error', 'error': 'user_id가 필요합니다'}
+                    
+                    # 응답 전송
+                    self.folder_access_socket.send_json(response)
+                    print(f"📤 folder access 응답 전송: {len(pathlist) if user_id else 0}개 파일")
+                    
+            except Exception as e:
+                if self.folder_access_running:  # 종료 중이 아닌 경우에만 에러 출력
+                    print(f"❌ folder access 요청 처리 중 오류: {e}")
+
     def _process_file_request(self, request_data):
         """파일 요청 처리 로직"""
         try:
@@ -409,6 +443,10 @@ class FileWatcher:
             
             def on_created(self, event):
                 if not event.is_directory and self.watcher._is_target_file(event.src_path):
+                    # Update file structure in database
+                    rel_path = os.path.relpath(event.src_path, self.watcher.watch_folder)
+                    self.watcher.auth_db.update_file_structure(rel_path, 'create')
+                    # Send file to server
                     self.watcher._send_file(event.src_path, 'create')
             
             def on_modified(self, event):
@@ -417,6 +455,10 @@ class FileWatcher:
             
             def on_deleted(self, event):
                 if not event.is_directory and self.watcher._is_target_file(event.src_path):
+                    # Update file structure in database
+                    rel_path = os.path.relpath(event.src_path, self.watcher.watch_folder)
+                    self.watcher.auth_db.update_file_structure(rel_path, 'delete')
+                    # Send file deletion to server
                     self.watcher._send_file(event.src_path, 'delete')
         
         # 감시 폴더 생성
@@ -442,6 +484,12 @@ class FileWatcher:
         access_thread.start()
         return access_thread
     
+    def start_folder_access_server(self):
+        """ZeroMQ REP 서버 시작 (folder access 함수 처리용 - 포트 5560)"""
+        folder_access_thread = threading.Thread(target=self._handle_folder_access_request_rep, daemon=True)
+        folder_access_thread.start()
+        return folder_access_thread
+
     def start(self):
         """전체 시스템 시작"""
         print("=" * 50)
@@ -457,6 +505,9 @@ class FileWatcher:
         # ZeroMQ REP 서버를 별도 스레드에서 시작 (access 처리용)
         access_thread = self.start_access_server()
         
+        # ZeroMQ REP 서버를 별도 스레드에서 시작 (folder access 처리용 - 포트 5560)
+        folder_access_thread = self.start_folder_access_server()
+        
         try:
             print("\n📋 사용 방법:")
             print(f"  • 감시 폴더: {self.watch_folder}")
@@ -464,6 +515,7 @@ class FileWatcher:
             print(f"  • 파일 변경사항 전송: PUSH tcp://localhost:{self.push_port}")
             print(f"  • 파일 요청 처리: ROUTER tcp://*:{self.router_port}")
             print(f"  • Access 권한 처리: REP tcp://*:{self.access_port}")
+            print(f"  • Folder Access 처리: REP tcp://*:{self.folder_access_port}")
             if self.repo:
                 print(f"  • Git 저장소: 활성화됨")
                 print(f"  • Git 브랜치: {self.repo.active_branch.name}")
@@ -479,6 +531,7 @@ class FileWatcher:
             print("\n\n🛑 시스템 종료 중...")
             self.router_running = False
             self.access_running = False
+            self.folder_access_running = False
             self.observer.stop()
             print("✅ 감시 종료 완료")
         
@@ -487,11 +540,14 @@ class FileWatcher:
             router_thread.join(timeout=1)
         if access_thread.is_alive():
             access_thread.join(timeout=1)
+        if folder_access_thread.is_alive():
+            folder_access_thread.join(timeout=1)
         
         # ZeroMQ 정리
         self.push_socket.close()
         self.router_socket.close()
         self.rep_socket.close()
+        self.folder_access_socket.close()
         self.context.term()
 
 
@@ -502,13 +558,15 @@ def main():
     PUSH_PORT = 5555  # 파일 변경사항 전송용 (PUSH 소켓)
     ROUTER_PORT = 5556  # 파일 요청 처리용 (ROUTER 소켓)
     ACCESS_PORT = 5559  # access 함수 처리용 (REP 소켓)
+    FOLDER_ACCESS_PORT = 5560  # folder access 처리용 (REP 소켓)
     
     # FileWatcher 인스턴스 생성 및 시작
     watcher = FileWatcher(
         watch_folder=WATCH_FOLDER,
         push_port=PUSH_PORT,
         router_port=ROUTER_PORT,
-        access_port=ACCESS_PORT
+        access_port=ACCESS_PORT,
+        folder_access_port=FOLDER_ACCESS_PORT
     )
     
     watcher.start()

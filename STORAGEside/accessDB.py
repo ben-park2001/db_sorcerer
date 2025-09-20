@@ -3,52 +3,45 @@ class DummyAuthDB:
     def __init__(self):
         # Users table
         self.users = {
+            "guest": {"role": "guest"},
             "user1": {"role": "employee"},
-            "user2": {"role": "guest"},
+            "user2": {"role": "employee"}, 
             "admin": {"role": "admin"}
         }
 
-        # Paths table
-        self.paths = {
-            "path1": {"path": "newsadded.docx", "description": "News added document"},
-            "path2": {"path": "sample.txt", "description": "Sample text file"},
-            "path3": {"path": "sample_2.txt", "description": "Sample text file 2"},
-            "path4": {"path": "sample_3.txt", "description": "Sample text file 3"},
-            "path5": {"path": "뉴스2.hwp", "description": "Korean news document"},
-            "path6": {"path": "신문3.pdf", "description": "Korean newspaper PDF"},
-            "path7": {"path": "sample copy.txt", "description": "Sample copy text file"},
-            "path8": {"path": "[경제로세상읽기] 왜 그들은 자백을 했을까.pdf", "description": "Economic reading - confession analysis PDF"},
-            "path9": {"path": "암시장에서의 달러 환전 유의 공지.pdf", "description": "Black market dollar exchange notice PDF"},
-            "path10": {"path": "전력경제 레포트 (1).pdf", "description": "Power economy report PDF"}
+        # 폴더별 파일 구조
+        self.folder_structure = {
+            "confidential": [
+                "암시장에서의 달러 환전 유의 공지.pdf",
+                "[경제로세상읽기] 왜 그들은 자백을 했을까.pdf"
+            ],
+            "project1": [
+                "newsadded.docx",
+                "전력경제 레포트 (1).pdf"
+            ],
+            "project2": [
+                "뉴스2.hwp",
+                "신문3.pdf"
+            ],
+            "company_events": [
+                "sample.txt",
+                "sample_2.txt"
+            ],
+            "company_important_notice": [
+                "sample_3.txt"
+            ],
+            "company_promotion": [
+                "sample copy.txt"
+            ]
         }
 
-        # Permissions table
-        self.permissions = [
-            # user1 (employee) permissions
-            {"user_id": "user1", "path_id": "path1", "permission": "read"},
-            {"user_id": "user1", "path_id": "path2", "permission": "read"},
-            {"user_id": "user1", "path_id": "path3", "permission": "read"},
-            {"user_id": "user1", "path_id": "path4", "permission": "read"},
-            {"user_id": "user1", "path_id": "path7", "permission": "read"},
-            
-            # user2 (guest) permissions - limited access
-            {"user_id": "user2", "path_id": "path2", "permission": "read"},
-            {"user_id": "user2", "path_id": "path3", "permission": "read"},
-            {"user_id": "user2", "path_id": "path5", "permission": "read"},
-            {"user_id": "user2", "path_id": "path7", "permission": "read"},
-            
-            # admin permissions - full access
-            {"user_id": "admin", "path_id": "path1", "permission": "read"},
-            {"user_id": "admin", "path_id": "path2", "permission": "read"},
-            {"user_id": "admin", "path_id": "path3", "permission": "read"},
-            {"user_id": "admin", "path_id": "path4", "permission": "read"},
-            {"user_id": "admin", "path_id": "path5", "permission": "read"},
-            {"user_id": "admin", "path_id": "path6", "permission": "read"},
-            {"user_id": "admin", "path_id": "path7", "permission": "read"},
-            {"user_id": "admin", "path_id": "path8", "permission": "read"},
-            {"user_id": "admin", "path_id": "path9", "permission": "read"},
-            {"user_id": "admin", "path_id": "path10", "permission": "read"}
-        ]
+        # 사용자별 폴더 접근 권한
+        self.folder_permissions = {
+            "guest": ["company_events","company_important_notice","company_promotion"],
+            "user1": ["project1", "company_events","company_important_notice","company_promotion"],
+            "user2": ["project2", "company_events","company_important_notice","company_promotion"],
+            "admin": ["confidential", "project1", "project2", "company_events","company_important_notice","company_promotion"]
+        }
 
     def get_authorized_paths(self, user_id: str):
         """
@@ -61,8 +54,76 @@ class DummyAuthDB:
             list: A list of paths the user is authorized to access.
         """
         authorized_paths = []
-        for perm in self.permissions:
-            if perm["user_id"] == user_id:
-                path_id = perm["path_id"]
-                authorized_paths.append(self.paths[path_id]["path"])
+        
+        # 사용자의 접근 가능한 폴더 목록 가져오기
+        allowed_folders = self.folder_permissions.get(user_id, [])
+        
+        # 각 허용된 폴더의 파일들을 경로에 추가
+        for folder in allowed_folders:
+            if folder in self.folder_structure:
+                for filename in self.folder_structure[folder]:
+                    # 폴더/파일명 형태로 전체 경로 생성
+                    full_path = f"{folder}/{filename}"
+                    authorized_paths.append(full_path)
+        
         return authorized_paths
+
+    def add_file_to_folder(self, folder_name: str, filename: str):
+        """
+        Add a file to the specified folder structure.
+        
+        Args:
+            folder_name (str): The folder to add the file to
+            filename (str): The name of the file to add
+        """
+        if folder_name in self.folder_structure:
+            if filename not in self.folder_structure[folder_name]:
+                self.folder_structure[folder_name].append(filename)
+                print(f"[+] Added file '{filename}' to folder '{folder_name}'")
+            else:
+                print(f"[!] File '{filename}' already exists in folder '{folder_name}'")
+        else:
+            print(f"[x] Folder '{folder_name}' not found in folder structure")
+
+    def remove_file_from_folder(self, folder_name: str, filename: str):
+        """
+        Remove a file from the specified folder structure.
+        
+        Args:
+            folder_name (str): The folder to remove the file from
+            filename (str): The name of the file to remove
+        """
+        if folder_name in self.folder_structure:
+            if filename in self.folder_structure[folder_name]:
+                self.folder_structure[folder_name].remove(filename)
+                print(f"[-] Removed file '{filename}' from folder '{folder_name}'")
+            else:
+                print(f"[!] File '{filename}' not found in folder '{folder_name}'")
+        else:
+            print(f"[x] Folder '{folder_name}' not found in folder structure")
+
+    def update_file_structure(self, file_path: str, operation: str):
+        """
+        Update file structure based on file path and operation.
+        
+        Args:
+            file_path (str): Relative path of the file (folder/filename format)
+            operation (str): 'create' or 'delete'
+        """
+        try:
+            # Parse folder and filename from path
+            if '/' in file_path:
+                folder_name, filename = file_path.split('/', 1)
+            else:
+                print(f"[!] Invalid file path format: {file_path}. Expected 'folder/filename'")
+                return
+            
+            if operation == 'create':
+                self.add_file_to_folder(folder_name, filename)
+            elif operation == 'delete':
+                self.remove_file_from_folder(folder_name, filename)
+            else:
+                print(f"[!] Unknown operation: {operation}. Use 'create' or 'delete'")
+                
+        except Exception as e:
+            print(f"[x] Error updating file structure: {e}")
