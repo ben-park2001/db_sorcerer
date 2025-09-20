@@ -10,19 +10,25 @@ class DummyAuthDB:
 
         # Paths table
         self.paths = {
-            "path1": {"path": "/data/file1.txt", "description": "File 1"},
-            "path2": {"path": "/data/file2.txt", "description": "File 2"},
-            "path3": {"path": "/data/file3.txt", "description": "File 3"}
+            "path1": {"path": "/test_files/newsadded.docx", "description": "News added document"},
+            "path2": {"path": "/test_files/sample.txt", "description": "Sample text file"},
+            "path3": {"path": "/test_files/sample_2.txt", "description": "Sample text file 2"},
+            "path4": {"path": "/test_files/뉴스2.hwp", "description": "Korean news document"},
+            "path5": {"path": "/test_files/신문3.pdf", "description": "Korean newspaper PDF"}
         }
 
         # Permissions table
         self.permissions = [
             {"user_id": "user1", "path_id": "path1", "permission": "read"},
             {"user_id": "user1", "path_id": "path2", "permission": "read"},
-            {"user_id": "user2", "path_id": "path3", "permission": "read"},
+            {"user_id": "user1", "path_id": "path3", "permission": "read"},
+            {"user_id": "user2", "path_id": "path2", "permission": "read"},
+            {"user_id": "user2", "path_id": "path4", "permission": "read"},
             {"user_id": "admin", "path_id": "path1", "permission": "read"},
             {"user_id": "admin", "path_id": "path2", "permission": "read"},
-            {"user_id": "admin", "path_id": "path3", "permission": "read"}
+            {"user_id": "admin", "path_id": "path3", "permission": "read"},
+            {"user_id": "admin", "path_id": "path4", "permission": "read"},
+            {"user_id": "admin", "path_id": "path5", "permission": "read"}
         ]
 
     def get_authorized_paths(self, user_id: str):

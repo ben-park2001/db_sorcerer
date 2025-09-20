@@ -18,7 +18,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import git
 from git import Repo, InvalidGitRepositoryError
-from STORAGEside.accessDB import DummyAuthDB
+from accessDB import DummyAuthDB
 
 
 class FileWatcher:
