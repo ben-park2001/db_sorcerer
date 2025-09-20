@@ -336,8 +336,18 @@ class FilePreprocessor:
                     
                     # 수정인 경우 diff 정보도 포함
                     if event_type == 'update':
-                        processed_message['diff_type'] = message.get('diff_type')
-                        processed_message['diff_content'] = message.get('diff_content')
+                        diff_type = message.get('diff_type')
+                        diff_content = message.get('diff_content')
+                        
+                        # diff_content가 없거나 의미없는 변경사항인 경우 처리 건너뛰기
+                        if not diff_content or not diff_content.strip():
+                            print(f"⚠️ 실제 변경사항이 없어 UPDATE 이벤트를 전송하지 않습니다.")
+                            print(f"   📄 파일 접근만 발생한 것으로 판단됩니다.")
+                            print("   " + "-" * 50)
+                            return  # 다음 노드로 전송하지 않음
+                        
+                        processed_message['diff_type'] = diff_type
+                        processed_message['diff_content'] = diff_content
                         processed_message['relative_path'] = message.get('relative_path')
                         
                     print(f"✅ 파일 내용 추출 완료: {len(extracted_content)} 문자")

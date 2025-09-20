@@ -56,19 +56,33 @@ class FilePostprocessor:
         
         print(f"🔄 [UPDATE] 파일 수정 처리 시작: {file_path}")
         
+        # diff_content가 없거나 의미있는 변경사항이 없으면 처리 건너뛰기
+        if not diff_content or not diff_content.strip():
+            print(f"   ⚠️ 실제 변경사항이 없어 UPDATE 처리를 건너뜁니다.")
+            print(f"   📄 파일 접근만 발생한 것으로 판단됩니다.")
+            # summary를 None으로 설정하여 알림이 전송되지 않도록 함
+            self.current_summary = None
+            print(f"🎉 [UPDATE] 파일 수정 처리 완료 (처리 생략): {file_path}")
+            print("   " + "=" * 50)
+            return
+        
         print(f"   🗑️ 기존 데이터 삭제 중...")
         delete_data(file_path)
         print(f"   ✅ 기존 데이터 삭제 완료")
         
-        if diff_content: 
-            print(f"   📊 변경사항 요약 생성 중...")
+        print(f"   📊 변경사항 요약 생성 중...")
+        try:
             summary = LLM_small(f"다음 변경사항을 1~2문장으로 요약해주세요: {diff_content}")
             # 변경사항 요약을 인스턴스 변수에 저장
-            self.current_summary = summary
-            file_name = file_path.split('\\')[-1]
+            self.current_summary = summary if summary and summary.strip() else "파일이 수정되었습니다."
+            file_name = file_path.split('\\')[-1] if '\\' in file_path else file_path.split('/')[-1]
             print(f"   📋 {file_name} 파일이 수정되었습니다.")
             print(f"   📍 경로: {file_path}")
-            print(f"   📝 변경사항: {summary}")
+            print(f"   📝 변경사항: {self.current_summary}")
+        except Exception as e:
+            print(f"   ❌ 변경사항 요약 생성 실패: {e}")
+            file_name = file_path.split('\\')[-1] if '\\' in file_path else file_path.split('/')[-1]
+            self.current_summary = f"{file_name} 파일이 수정되었습니다."
         
         if content:
             print(f"   📝 텍스트 청킹 시작...")
@@ -356,15 +370,19 @@ class FilePostprocessor:
             return
         
         # 처리 완료 후 좋아요 사용자들에게 알림 전송 (요약과 timestamp 포함)
-        if liked_users:
+        if liked_users and self.current_summary is not None:
             self._send_to_messagedb(
                 user_list=liked_users, 
                 message_content=notification_msg,
                 summary=self.current_summary,
                 timestamp=timestamp
             )
-            # 전송 후 요약 초기화
-            self.current_summary = None
+            print(f"📬 알림 전송 완료: {len(liked_users)}명에게 전송")
+        elif liked_users and self.current_summary is None:
+            print(f"📬 알림 전송 생략: 실제 변경사항이 없어 알림하지 않음")
+        
+        # 전송 후 요약 초기화
+        self.current_summary = None
 
     def start(self):
         """서비스 시작"""
