@@ -11,14 +11,19 @@ from retriever import FileRetriever
 class RAGAgent:
     """RAG 시스템을 이용한 에이전트"""
     
-    def __init__(self, mode: str = "deep"):
+    def __init__(self, mode: str = "deep", user_id: str = None):
         """
         Args:
             mode: 검색 모드 ('normal': 1회, 'deep': 3회, 'deeper': 5회)
+            user_id: 사용자 ID (권한 확인용, 필수)
         """
+        if not user_id:
+            raise ValueError("사용자 ID가 필요합니다. 접근이 거부되었습니다.")
+        
         self.mode = mode
+        self.user_id = user_id
         self.max_iterations = self._get_max_iterations()
-        self.retriever = FileRetriever()
+        self.retriever = FileRetriever(user_id=user_id)
         
         # structured LLM을 위한 JSON 스키마
         self.output_schema = {
@@ -195,8 +200,19 @@ def main():
     mode_map = {"1": "normal", "2": "deep", "3": "deeper"}
     mode = mode_map.get(mode_input, "deep")
     
-    agent = RAGAgent(mode)
-    print(f"🚀 {mode} 모드로 시작합니다.")
+    # 사용자 ID 입력
+    user_id = input("사용자 ID를 입력하세요: ").strip()
+    if not user_id:
+        print("❌ 사용자 ID가 필요합니다. 프로그램을 종료합니다.")
+        return
+    
+    try:
+        agent = RAGAgent(mode, user_id=user_id)
+        print(f"🚀 {mode} 모드로 시작합니다.")
+        print(f"👤 사용자: {user_id}")
+    except ValueError as e:
+        print(f"❌ {e}")
+        return
     
     try:
         # 사용자 입력 받기
