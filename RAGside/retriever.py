@@ -186,7 +186,7 @@ class FileRetriever:
             print(f"❌ Chunk 추출 실패 ({file_path}): {e}")
             return None
     
-    def search_chunks(self, query: str, top_n: int = 5) -> List[str]:
+    def search_chunks(self, query: str, top_n: int = 5) -> List[Dict[str, str]]:
         """
         query로 관련 chunk들을 검색하고 reranking하여 상위 n개를 반환합니다.
         
@@ -195,7 +195,7 @@ class FileRetriever:
             top_n: 반환할 상위 chunk 개수
             
         Returns:
-            상위 n개 chunk 원문들의 리스트
+            상위 n개 chunk 정보들의 리스트 (각 항목은 {'text': chunk 원문, 'file_name': 파일명} 형태)
         """
         try:
             print(f"🔍 검색 시작: '{query}'")
@@ -215,10 +215,10 @@ class FileRetriever:
             # 3. ChromaDB에서 유사한 chunk들 검색
             similar_chunks = self._search_similar_chunks(query_embedding, n_results=top_n*2, pathlist=pathlist)
             if not similar_chunks:
-                return ['검색된 문서가 없습니다']
+                return [{'text': '검색된 문서가 없습니다', 'file_name': ''}]
             
-            # 4. 각 chunk의 원문 추출
-            chunk_texts = []
+            # 4. 각 chunk의 원문과 파일명 추출
+            chunk_data = []
             for chunk in similar_chunks:
                 chunk_text = self._extract_chunk_text(
                     chunk['file_path'], 
@@ -226,22 +226,42 @@ class FileRetriever:
                     chunk['end_pos']
                 )
                 if chunk_text:
-                    chunk_texts.append(chunk_text)
+                    import os
+                    file_name = os.path.basename(chunk['file_path'])
+                    chunk_data.append({
+                        'text': chunk_text,
+                        'file_name': file_name,
+                        'file_path': chunk['file_path']  # reranking을 위해 임시 저장
+                    })
             
-            if not chunk_texts:
+            if not chunk_data:
                 return []
             
             # 5. Reranking으로 상위 n개 선별
             try:
+                # reranking을 위해 텍스트만 추출
+                chunk_texts = [item['text'] for item in chunk_data]
                 reranked_chunks = Reranker(query, chunk_texts, top_n=top_n)['results']
-                raw_chunks = []
-                for chunk in reranked_chunks:
-                    raw_chunks.append(chunk['document'])
-                print(f"✅ 검색 완료: {len(raw_chunks)}개 chunk 반환")
-                return raw_chunks
+                
+                # reranking 결과를 바탕으로 원본 chunk_data에서 해당하는 항목들을 찾아서 반환
+                result_chunks = []
+                for reranked_chunk in reranked_chunks:
+                    reranked_text = reranked_chunk['document']
+                    # 원본 chunk_data에서 해당 텍스트를 찾기
+                    for chunk_item in chunk_data:
+                        if chunk_item['text'] == reranked_text:
+                            result_chunks.append({
+                                'text': chunk_item['text'],
+                                'file_name': chunk_item['file_name']
+                            })
+                            break
+                
+                print(f"✅ 검색 완료: {len(result_chunks)}개 chunk 반환")
+                return result_chunks
             except Exception as e:
                 print(f"⚠️ Reranking 실패, 원본 순서로 반환: {e}")
-                return chunk_texts[:top_n]
+                # reranking 실패시 원본 순서로 반환 (file_path 제거)
+                return [{'text': item['text'], 'file_name': item['file_name']} for item in chunk_data[:top_n]]
                 
         except Exception as e:
             print(f"❌ 검색 중 오류: {e}")

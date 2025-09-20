@@ -56,7 +56,9 @@ class RAGAgent:
             last_search_results = search_results
             
             if search_results:
-                new_context = "\n".join(search_results)
+                # 딕셔너리 형태의 검색 결과에서 텍스트만 추출하여 컨텍스트 구성
+                context_texts = [result['text'] for result in search_results]
+                new_context = "\n".join(context_texts)
                 accumulated_context += f"\n\n=== 검색 결과 {iteration} ===\n{new_context}"
                 print(f"✅ {len(search_results)}개 문서 조각 발견")
             else:
@@ -162,8 +164,16 @@ JSON 형식으로 정확히 응답하세요."""
         print(f"\n📚 참고한 문서 ({len(chunks)}개):")
         print("=" * 50)
         for i, chunk in enumerate(chunks, 1):
-            preview = chunk[:200] + "..." if len(chunk) > 200 else chunk
-            print(f"{i}. {preview}")
+            if isinstance(chunk, dict):
+                chunk_text = chunk.get('text', '')
+                file_name = chunk.get('file_name', '알 수 없는 파일')
+                preview = chunk_text[:200] + "..." if len(chunk_text) > 200 else chunk_text
+                print(f"{i}. 📄 {file_name}")
+                print(f"   {preview}")
+            else:
+                # 이전 버전과의 호환성을 위해 문자열 처리도 유지
+                preview = chunk[:200] + "..." if len(chunk) > 200 else chunk
+                print(f"{i}. {preview}")
             print("-" * 30)
     
     def close(self):
