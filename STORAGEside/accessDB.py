@@ -12,26 +12,22 @@ class DummyAuthDB:
         # 폴더별 파일 구조
         self.folder_structure = {
             "confidential": [
-                "암시장에서의 달러 환전 유의 공지.pdf",
-                "[경제로세상읽기] 왜 그들은 자백을 했을까.pdf"
+
             ],
             "project1": [
-                "newsadded.docx",
-                "전력경제 레포트 (1).pdf"
+
             ],
             "project2": [
-                "뉴스2.hwp",
-                "신문3.pdf"
+
             ],
             "company_events": [
-                "sample.txt",
-                "sample_2.txt"
+
             ],
             "company_important_notice": [
-                "sample_3.txt"
+
             ],
             "company_promotion": [
-                "sample copy.txt"
+    
             ]
         }
 
@@ -50,7 +46,7 @@ class DummyAuthDB:
             "project2": ["user2", "admin"],
             "company_events": ["guest", "user2", "admin"],
             "company_important_notice": ["user1", "user2", "admin"],
-            "company_promotion": ["guest", "user1"]
+            "company_promotion": ["guest", "user1","admin"]
         }
 
     def get_authorized_paths(self, user_id: str):
