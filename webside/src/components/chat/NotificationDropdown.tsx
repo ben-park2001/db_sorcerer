@@ -30,24 +30,40 @@ function NotificationItem({ notification, onClick }: NotificationItemProps) {
       }`}
       onClick={onClick}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-3 w-full overflow-hidden">
         <Clock className="w-3 h-3 text-muted-foreground mt-1 flex-shrink-0" />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm text-foreground line-clamp-2 leading-relaxed">
+        <div className="flex-1 min-w-0 overflow-hidden">
+          <p className="text-sm text-foreground leading-relaxed break-words overflow-hidden" 
+             style={{
+               display: '-webkit-box',
+               WebkitBoxOrient: 'vertical',
+               WebkitLineClamp: 2,
+               overflow: 'hidden',
+               wordBreak: 'break-word',
+               overflowWrap: 'break-word'
+             }}>
             {notification.message}
           </p>
           {notification.summary && (
-            <div className="mt-2 p-2 bg-accent/30 rounded-md border border-border/30">
+            <div className="mt-2 p-2 bg-accent/30 rounded-md border border-border/30 overflow-hidden">
               <div className="flex items-center gap-1 mb-1">
-                <FileText className="w-3 h-3 text-muted-foreground" />
-                <p className="text-xs text-muted-foreground font-medium">요약</p>
+                <FileText className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                <p className="text-xs text-muted-foreground font-medium truncate">요약</p>
               </div>
-              <p className="text-sm text-foreground/80 line-clamp-3 leading-relaxed">
+              <p className="text-sm text-foreground/80 leading-relaxed break-words overflow-hidden"
+                 style={{
+                   display: '-webkit-box',
+                   WebkitBoxOrient: 'vertical',
+                   WebkitLineClamp: 3,
+                   overflow: 'hidden',
+                   wordBreak: 'break-word',
+                   overflowWrap: 'break-word'
+                 }}>
                 {notification.summary}
               </p>
             </div>
           )}
-          <p className="text-xs text-muted-foreground mt-1.5 font-medium">
+          <p className="text-xs text-muted-foreground mt-1.5 font-medium truncate">
             {notification.formatted_time}
           </p>
         </div>
@@ -88,26 +104,26 @@ export default function NotificationDropdown({
 
   return (
     <div className="absolute top-full right-0 mt-2 z-50 animate-in fade-in-0 zoom-in-95 duration-200" ref={dropdownRef}>
-      <Card className="w-80 shadow-lg border-border/50 backdrop-blur-sm bg-background/95">
+      <Card className="w-80 max-w-80 shadow-lg border-border/50 backdrop-blur-sm bg-background/95 overflow-hidden">
         <div className="p-3 border-b border-border/50">
           <div className="flex items-center justify-between">
-            <h3 className="font-medium text-sm">알림</h3>
-            <Button variant="ghost" size="sm" onClick={onClose} className="h-6 px-2 text-xs hover:bg-accent/50">
+            <h3 className="font-medium text-sm truncate">알림</h3>
+            <Button variant="ghost" size="sm" onClick={onClose} className="h-6 px-2 text-xs hover:bg-accent/50 flex-shrink-0">
               닫기
             </Button>
           </div>
         </div>
         
-        <ScrollArea className="max-h-96">
+        <ScrollArea className="max-h-96 overflow-hidden">
           {notifications.length === 0 ? (
             <div className="p-6 text-center text-muted-foreground">
               <Bell className="w-8 h-8 mx-auto mb-2 opacity-50" />
               <p className="text-sm">새로운 알림이 없습니다</p>
             </div>
           ) : (
-            <div>
+            <div className="overflow-hidden">
               {notifications.map((notification, index) => (
-                <div key={notification.id}>
+                <div key={notification.id} className="overflow-hidden">
                   <NotificationItem
                     notification={notification}
                     onClick={() => onNotificationClick(notification.timestamp)}
