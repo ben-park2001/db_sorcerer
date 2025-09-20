@@ -6,10 +6,15 @@ from db import create_data, delete_data
 
 #클라이언트는 요약하는 애는 전부다 sllm으로 수정 필요
 class FilePostprocessor:
-    def __init__(self, pull_port=5558):
+    def __init__(self, pull_port=5558, messagedb_port=5560):
         self.context = zmq.Context()
         self.pull_socket = self.context.socket(zmq.PULL)
         self.pull_socket.connect(f"tcp://localhost:{pull_port}")
+        
+        # messagedb와 통신을 위한 REQ 소켓
+        self.req_socket = self.context.socket(zmq.REQ)
+        self.req_socket.connect(f"tcp://localhost:{messagedb_port}")
+        
         self.running = False
 
     def handle_create(self, message):
@@ -269,11 +274,27 @@ class FilePostprocessor:
         
         print(f"       ✅ ChromaDB 업로드 완료: {success_count}/{len(embeddings)} 성공")
 
+    def _send_to_messagedb(self, user_list, message_content):
+        """messagedb에 메시지 전송"""
+        try:
+            message = {
+                "user_list": user_list,
+                "message": message_content
+            }
+            self.req_socket.send_json(message)
+            response = self.req_socket.recv_json()
+            print(f"   📤 messagedb 전송 완료: {len(user_list)}명에게 메시지 전송")
+            return response
+        except Exception as e:
+            print(f"   ❌ messagedb 전송 실패: {e}")
+            return None
+
     def process_message(self, message):
         """메시지 처리"""
         event_type = message.get('event_type')
         file_path = message.get('file_path')
         user_id = message.get('user_id')
+        liked_users = message.get('liked_users', [])
         timestamp = message.get('timestamp')
         processed_timestamp = message.get('processed_timestamp')
         status = message.get('status')
@@ -283,6 +304,7 @@ class FilePostprocessor:
         print(f"   📄 파일: {file_path}")
         print(f"   📋 이벤트: {event_type}")
         print(f"   👤 사용자: {user_id}")
+        print(f"   👥 좋아요 사용자: {liked_users}")
         print(f"   ✅ 전처리 상태: {status}")
         
         if timestamp:
@@ -308,12 +330,20 @@ class FilePostprocessor:
         # 실제 처리 로직 실행
         if event_type == 'create':
             self.handle_create(message)
+            notification_msg = f"새 파일이 생성되었습니다: {file_path}"
         elif event_type == 'update':
             self.handle_update(message)
+            notification_msg = f"파일이 수정되었습니다: {file_path}"
         elif event_type == 'delete':
             self.handle_delete(message)
+            notification_msg = f"파일이 삭제되었습니다: {file_path}"
         else:
             print(f"❌ 알 수 없는 이벤트 타입: {event_type}")
+            return
+        
+        # 처리 완료 후 좋아요 사용자들에게 알림 전송
+        if liked_users:
+            self._send_to_messagedb(liked_users, notification_msg)
 
     def start(self):
         """서비스 시작"""
@@ -330,6 +360,7 @@ class FilePostprocessor:
             print("종료 중...")
         finally:
             self.pull_socket.close()
+            self.req_socket.close()
             self.context.term()
 
 if __name__ == "__main__":

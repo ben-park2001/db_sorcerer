@@ -43,6 +43,16 @@ class DummyAuthDB:
             "admin": ["confidential", "project1", "project2", "company_events","company_important_notice","company_promotion"]
         }
 
+        # 폴더별 좋아요 누른 사용자 목록
+        self.folder_liked_users = {
+            "confidential": ["admin"],
+            "project1": ["user1", "admin"],
+            "project2": ["user2", "admin"],
+            "company_events": ["guest", "user2", "admin"],
+            "company_important_notice": ["user1", "user2", "admin"],
+            "company_promotion": ["guest", "user1"]
+        }
+
     def get_authorized_paths(self, user_id: str):
         """
         Retrieve the list of authorized paths for a given user.
@@ -127,3 +137,15 @@ class DummyAuthDB:
                 
         except Exception as e:
             print(f"[x] Error updating file structure: {e}")
+
+    def get_folder_liked_users(self, folder_name: str):
+        """
+        폴더에 좋아요를 누른 사용자 목록을 반환
+        
+        Args:
+            folder_name (str): 폴더명
+            
+        Returns:
+            list: 해당 폴더에 좋아요를 누른 사용자 목록
+        """
+        return self.folder_liked_users.get(folder_name, [])

@@ -314,6 +314,7 @@ class FilePreprocessor:
                 'event_type': event_type,
                 'file_path': file_path,
                 'user_id': user_id,
+                'liked_users': message.get('liked_users', []),
                 'timestamp': timestamp,
                 'processed_timestamp': time.time(),
                 'processor': 'file_preprocessor'
