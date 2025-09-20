@@ -1,7 +1,7 @@
 """
 메시지 데이터베이스 서버
 - ZMQ REP 서버 (5560 포트): postprocessor로부터 메시지 수신
-- Flask 웹 서버 (8080 포트): 사용자별 메시지 조회 API
+- Flask 웹 서버 (5001) 포트): 사용자별 메시지 조회 API
 """
 
 import zmq
@@ -12,7 +12,7 @@ from collections import defaultdict
 
 
 class MessageDB:
-    def __init__(self, zmq_port=5560, flask_port=8080):
+    def __init__(self, zmq_port=5560, flask_port=5001):
         self.zmq_port = zmq_port
         self.flask_port = flask_port
         

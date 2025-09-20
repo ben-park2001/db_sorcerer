@@ -1,9 +1,14 @@
 'use client';
 
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { User } from 'lucide-react';
+import NotificationBell from './NotificationBell';
+import NotificationDropdown from './NotificationDropdown';
+import NotificationErrorBoundary from './NotificationErrorBoundary';
+import { useNotifications } from '@/hooks/useNotifications';
 
 interface ChatHeaderProps {
   userId: string;
@@ -22,6 +27,9 @@ export default function ChatHeader({
   onLogout, 
   onModeChange 
 }: ChatHeaderProps) {
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const { notifications, unreadCount, markAsRead } = useNotifications(userId);
+
   return (
     <div className="border-b border-border p-4 bg-background/80 backdrop-blur-sm sticky top-0 z-10">
       <div className="max-w-4xl mx-auto flex items-center justify-between">
@@ -47,6 +55,26 @@ export default function ChatHeader({
             </Button>
           </div>
           
+          {/* 알림 시스템 */}
+          <NotificationErrorBoundary onReset={() => window.location.reload()}>
+            <div className="relative">
+              <NotificationBell 
+                count={unreadCount}
+                onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                isOpen={isNotificationOpen}
+              />
+              <NotificationDropdown
+                notifications={notifications}
+                isOpen={isNotificationOpen}
+                onClose={() => setIsNotificationOpen(false)}
+                onNotificationClick={(timestamp) => {
+                  markAsRead(timestamp);
+                  setIsNotificationOpen(false);
+                }}
+              />
+            </div>
+          </NotificationErrorBoundary>
+
           {/* 모드 선택 */}
           <div className="hidden sm:flex items-center gap-2">
             <span className="text-sm text-muted-foreground">모드:</span>
