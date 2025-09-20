@@ -3,7 +3,7 @@ RAG Agent - 사용자 질문에 대해 검색과 AI 추론을 반복하여 답�
 """
 
 import json
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from Models.llm import structured_LLM
 from retriever import FileRetriever
 
@@ -11,14 +11,19 @@ from retriever import FileRetriever
 class RAGAgent:
     """RAG 시스템을 이용한 에이전트"""
     
-    def __init__(self, mode: str = "deep"):
+    def __init__(self, mode: str = "deep", user_id: str = None):
         """
         Args:
             mode: 검색 모드 ('normal': 1회, 'deep': 3회, 'deeper': 5회)
+            user_id: 사용자 ID (권한 확인용, 필수)
         """
+        if not user_id:
+            raise ValueError("사용자 ID가 필요합니다. 접근이 거부되었습니다.")
+        
         self.mode = mode
+        self.user_id = user_id
         self.max_iterations = self._get_max_iterations()
-        self.retriever = FileRetriever()
+        self.retriever = FileRetriever(user_id=user_id)
         
         # structured LLM을 위한 JSON 스키마
         self.output_schema = {
@@ -45,16 +50,20 @@ class RAGAgent:
         modes = {"normal": 1, "deep": 3, "deeper": 5}
         return modes.get(self.mode, 3)  # 잘못된 값이면 기본값 3
     
-    def process(self, user_input: str) -> str:
+    def process(self, user_input: str, conversation_history: Optional[List[Dict[str, str]]] = None) -> str:
         """
         사용자 입력을 처리하여 최종 답변을 반환
         
         Args:
             user_input: 사용자의 질문이나 요청
+            conversation_history: 이전 대화 히스토리 (optional)
             
         Returns:
             최종 AI 응답
         """
+        if conversation_history is None:
+            conversation_history = []
+            
         print(f"🤖 사용자 질문: {user_input}")
         
         # 검색된 컨텍스트를 누적
@@ -82,7 +91,7 @@ class RAGAgent:
                 print("❌ 검색 결과 없음")
             
             # 2. LLM에게 현재 상황을 전달하고 다음 액션 결정
-            prompt = self._build_prompt(user_input, accumulated_context, iteration)
+            prompt = self._build_prompt(user_input, accumulated_context, iteration, conversation_history)
             
             try:
                 response = structured_LLM(prompt, self.output_schema)
@@ -131,10 +140,19 @@ class RAGAgent:
             print(f"❌ 최종 답변 생성 실패: {e}")
             return "죄송합니다. 답변을 생성하는 중 오류가 발생했습니다."
     
-    def _build_prompt(self, user_input: str, context: str, iteration: int) -> str:
+    def _build_prompt(self, user_input: str, context: str, iteration: int, conversation_history: List[Dict[str, str]]) -> str:
         """LLM용 프롬프트 생성"""
+        # 히스토리 텍스트 생성 (최근 5개만 사용)
+        history_text = ""
+        if conversation_history:
+            recent_history = conversation_history[-5:]  # 최근 5개만
+            history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in recent_history])
+        
         return f"""
 당신은 사용자의 질문에 답하기 위해 문서를 검색하고 분석하는 AI 에이전트입니다.
+
+대화 히스토리:
+{history_text}
 
 사용자 질문: {user_input}
 
@@ -182,8 +200,19 @@ def main():
     mode_map = {"1": "normal", "2": "deep", "3": "deeper"}
     mode = mode_map.get(mode_input, "deep")
     
-    agent = RAGAgent(mode)
-    print(f"🚀 {mode} 모드로 시작합니다.")
+    # 사용자 ID 입력
+    user_id = input("사용자 ID를 입력하세요: ").strip()
+    if not user_id:
+        print("❌ 사용자 ID가 필요합니다. 프로그램을 종료합니다.")
+        return
+    
+    try:
+        agent = RAGAgent(mode, user_id=user_id)
+        print(f"🚀 {mode} 모드로 시작합니다.")
+        print(f"👤 사용자: {user_id}")
+    except ValueError as e:
+        print(f"❌ {e}")
+        return
     
     try:
         # 사용자 입력 받기

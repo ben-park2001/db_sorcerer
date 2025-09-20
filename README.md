@@ -7,3 +7,5 @@
 3. Turn on oracle.py on remote computer(File Storage Server)
 
 chroma run --host 0.0.0.0 --port 8000
+
+npm run dev
