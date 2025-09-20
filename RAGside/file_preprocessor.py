@@ -20,6 +20,7 @@ from typing import Dict, Any, Optional, Union
 import zmq
 from docx import Document
 import pdfplumber
+import olefile
 
 
 def read_file(file_path: str) -> str:
@@ -85,10 +86,6 @@ def read_file(file_path: str) -> str:
 
 def _extract_hwp_file(file_path: str) -> str:
     """Main HWP extraction logic."""
-    try:
-        import olefile
-    except ImportError as e:
-        raise ImportError(f"Required libraries not available for HWP extraction: {e}")
 
     # HWP file constants
     FILE_HEADER_SECTION = "FileHeader"
