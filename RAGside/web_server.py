@@ -9,8 +9,9 @@ import json
 from agent import RAGAgent
 
 app = Flask(__name__)
-# CORS 설정 - 프론트엔드에서 접근 가능하도록 설정
-CORS(app, origins=['http://localhost:3000', 'http://127.0.0.1:3000'])
+# CORS 설정 - 모든 origin에서 접근 가능하도록 설정 (개발용)
+# 실제 배포시에는 specific origins를 명시하는 것이 보안상 좋습니다
+CORS(app, origins="*")
 
 # RAGAgent 인스턴스들 (user_id별로 관리)
 rag_agents = {}
