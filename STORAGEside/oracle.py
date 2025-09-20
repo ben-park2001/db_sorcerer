@@ -18,6 +18,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import git
 from git import Repo, InvalidGitRepositoryError
+from STORAGEside.accessDB import DummyAuthDB
 
 
 class FileWatcher:
@@ -56,6 +57,8 @@ class FileWatcher:
         # Router 처리를 위한 스레드 플래그
         self.router_running = False
         self.access_running = False
+
+        self.auth_db = DummyAuthDB()
         
     def _init_git_repo(self):
         """Git 저장소 초기화"""
@@ -377,23 +380,26 @@ class FileWatcher:
         except Exception as e:
             print(f"❌ 파일 요청 처리 중 오류: {e}")
             return {'error': str(e), 'status': 'error'}
-    
+
+
     def access(self, user_id: str) -> list:
         """
-        사용자 ID를 받아 접근 가능한 파일 경로 리스트를 반환
+        Retrieve the list of authorized file paths for a given user.
+
         Args:
-            user_id: 사용자 ID
+            user_id: The ID of the user.
+
         Returns:
-            접근 가능한 파일 경로 리스트
+            A list of file paths the user is authorized to access.
         """
-        # 더미 데이터: 3개 파일 경로 반환
-        dummy_paths = [
-            "data/user_document1.txt",
-            "data/user_document2.pdf", 
-            "data/user_document3.docx"
-        ]
-        print(f"🔑 접근 권한 조회: 사용자 {user_id} -> {len(dummy_paths)}개 파일")
-        return dummy_paths
+        try:
+            authorized_paths = self.auth_db.get_authorized_paths(user_id)
+            print(f"🔑 Authorized paths for user {user_id}: {authorized_paths}")
+            return authorized_paths
+        except Exception as e:
+            print(f"❌ Error retrieving authorized paths for user {user_id}: {e}")
+            return []
+
     
     def start_watching(self):
         """파일 감시 시작"""
