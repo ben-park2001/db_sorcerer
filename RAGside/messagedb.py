@@ -41,11 +41,14 @@ class MessageDB:
                 'messages': messages
             })
 
-    def add_message_to_users(self, user_list, message):
+    def add_message_to_users(self, user_list, message, summary=None, timestamp=None):
         """사용자 목록에 메시지 추가"""
-        timestamp = time.time()
+        if timestamp is None:
+            timestamp = time.time()
+            
         message_data = {
             'message': message,
+            'summary': summary,
             'timestamp': timestamp,
             'formatted_time': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))
         }
@@ -54,6 +57,8 @@ class MessageDB:
             self.user_messages[user_id].append(message_data)
         
         print(f"📬 메시지 저장 완료: {len(user_list)}명 사용자에게 추가")
+        if summary:
+            print(f"📝 요약 포함: {summary[:50]}...")
         return len(user_list)
 
     def get_user_messages(self, user_id):
@@ -75,9 +80,11 @@ class MessageDB:
                     # 메시지 처리
                     user_list = request.get('user_list', [])
                     message = request.get('message', '')
+                    summary = request.get('summary')
+                    timestamp = request.get('timestamp')
                     
                     if user_list and message:
-                        count = self.add_message_to_users(user_list, message)
+                        count = self.add_message_to_users(user_list, message, summary, timestamp)
                         response = {'status': 'success', 'users_notified': count}
                     else:
                         response = {'status': 'error', 'error': 'user_list 및 message가 필요합니다'}

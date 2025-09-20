@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
-import { Clock, Bell } from 'lucide-react';
+import { Clock, Bell, FileText } from 'lucide-react';
 import { Notification } from '@/hooks/useNotifications';
 
 interface NotificationDropdownProps {
@@ -36,6 +36,17 @@ function NotificationItem({ notification, onClick }: NotificationItemProps) {
           <p className="text-sm text-foreground line-clamp-2 leading-relaxed">
             {notification.message}
           </p>
+          {notification.summary && (
+            <div className="mt-2 p-2 bg-accent/30 rounded-md border border-border/30">
+              <div className="flex items-center gap-1 mb-1">
+                <FileText className="w-3 h-3 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground font-medium">요약</p>
+              </div>
+              <p className="text-sm text-foreground/80 line-clamp-3 leading-relaxed">
+                {notification.summary}
+              </p>
+            </div>
+          )}
           <p className="text-xs text-muted-foreground mt-1.5 font-medium">
             {notification.formatted_time}
           </p>

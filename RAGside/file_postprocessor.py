@@ -16,6 +16,9 @@ class FilePostprocessor:
         self.req_socket.connect(f"tcp://localhost:{messagedb_port}")
         
         self.running = False
+        
+        # 현재 처리중인 파일의 요약 정보를 저장
+        self.current_summary = None
 
     def handle_create(self, message):
         """파일 생성 처리"""
@@ -60,6 +63,8 @@ class FilePostprocessor:
         if diff_content: 
             print(f"   📊 변경사항 요약 생성 중...")
             summary = LLM_small(f"다음 변경사항을 1~2문장으로 요약해주세요: {diff_content}")
+            # 변경사항 요약을 인스턴스 변수에 저장
+            self.current_summary = summary
             file_name = file_path.split('\\')[-1]
             print(f"   📋 {file_name} 파일이 수정되었습니다.")
             print(f"   📍 경로: {file_path}")
@@ -243,6 +248,9 @@ class FilePostprocessor:
         combined_summaries = "\n".join(chunk_summaries)
         final_summary = LLM_small(f"다음 요약들을 종합하여 최종 요약을 2~3문장으로 만들어주세요: {combined_summaries}")
         
+        # 최종 요약을 인스턴스 변수에 저장
+        self.current_summary = final_summary
+        
         file_name = file_path.split('\\')[-1]
         print(f"       📋 {file_name} 파일이 생성되었습니다.")
         print(f"       📍 경로: {file_path}")
@@ -274,16 +282,20 @@ class FilePostprocessor:
         
         print(f"       ✅ ChromaDB 업로드 완료: {success_count}/{len(embeddings)} 성공")
 
-    def _send_to_messagedb(self, user_list, message_content):
+    def _send_to_messagedb(self, user_list, message_content, summary=None, timestamp=None):
         """messagedb에 메시지 전송"""
         try:
             message = {
                 "user_list": user_list,
-                "message": message_content
+                "message": message_content,
+                "summary": summary,
+                "timestamp": timestamp or time.time()
             }
             self.req_socket.send_json(message)
             response = self.req_socket.recv_json()
             print(f"   📤 messagedb 전송 완료: {len(user_list)}명에게 메시지 전송")
+            if summary:
+                print(f"   📝 요약 포함: {summary[:50]}...")
             return response
         except Exception as e:
             print(f"   ❌ messagedb 전송 실패: {e}")
@@ -337,13 +349,22 @@ class FilePostprocessor:
         elif event_type == 'delete':
             self.handle_delete(message)
             notification_msg = f"파일이 삭제되었습니다: {file_path}"
+            # DELETE의 경우 요약이 없으므로 현재 요약을 초기화
+            self.current_summary = None
         else:
             print(f"❌ 알 수 없는 이벤트 타입: {event_type}")
             return
         
-        # 처리 완료 후 좋아요 사용자들에게 알림 전송
+        # 처리 완료 후 좋아요 사용자들에게 알림 전송 (요약과 timestamp 포함)
         if liked_users:
-            self._send_to_messagedb(liked_users, notification_msg)
+            self._send_to_messagedb(
+                user_list=liked_users, 
+                message_content=notification_msg,
+                summary=self.current_summary,
+                timestamp=timestamp
+            )
+            # 전송 후 요약 초기화
+            self.current_summary = None
 
     def start(self):
         """서비스 시작"""

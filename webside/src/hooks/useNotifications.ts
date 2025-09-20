@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 
 export interface Notification {
   message: string;
+  summary?: string;
   timestamp: number;
   formatted_time: string;
   id: string;
