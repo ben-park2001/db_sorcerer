@@ -3,7 +3,7 @@ RAGAgent Web Server
 - Flask를 사용하여 RAGAgent를 웹에서 접근 가능하도록 하는 간단한 서버
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import json
 from agent import RAGAgent
@@ -28,7 +28,7 @@ def get_rag_agent(mode="deep", user_id="anonymous"):
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """채팅 API - 사용자 질문을 받고 RAGAgent로 처리"""
+    """채팅 API - 스트리밍 방식으로 RAG 과정을 실시간 전달"""
     try:
         # 요청 데이터 파싱
         data = request.get_json()
@@ -56,15 +56,39 @@ def chat():
         if not user_id or not user_id.strip():
             user_id = 'anonymous'
         
-        # RAGAgent로 처리
-        agent = get_rag_agent(mode, user_id)
-        response = agent.process(user_message)
+        # 스트리밍 generator 함수
+        def generate_stream():
+            try:
+                agent = get_rag_agent(mode, user_id)
+                
+                # 시작 메시지
+                yield f"data: {json.dumps({'type': 'start', 'mode': mode})}\n\n"
+                
+                # RAGAgent 스트리밍 처리
+                for update in agent.process_stream(user_message):
+                    yield f"data: {json.dumps(update)}\n\n"
+                
+                # 완료 메시지
+                yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+                
+            except Exception as e:
+                error_data = {
+                    'type': 'error',
+                    'error': f'처리 중 오류가 발생했습니다: {str(e)}'
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
         
-        return jsonify({
-            'status': 'success',
-            'response': response,
-            'mode': mode
-        })
+        # SSE 응답 반환
+        return Response(
+            generate_stream(),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            }
+        )
         
     except Exception as e:
         print(f"❌ API 오류: {e}")

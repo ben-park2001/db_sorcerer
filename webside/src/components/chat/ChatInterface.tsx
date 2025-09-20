@@ -11,83 +11,17 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Send, Loader2, User, Bot, AlertCircle } from 'lucide-react';
-import { sendChatMessage, checkServerHealth } from '@/lib/api';
-
-interface Message {
-  id: string;
-  content: string;
-  role: 'user' | 'assistant';
-  timestamp: Date;
-  isError?: boolean;
-}
-
-function LoginScreen({ onLogin }: { onLogin: (userId: string) => void }) {
-  const [userId, setUserId] = useState('');
-  const [password, setPassword] = useState('');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (userId.trim()) {
-      onLogin(userId.trim());
-    }
-  };
-
-  return (
-    <div className="h-screen w-full flex items-center justify-center bg-background">
-      <Card className="w-full max-w-md p-8">
-        <div className="text-center space-y-4 mb-8">
-          <Avatar className="w-16 h-16 mx-auto">
-            <AvatarFallback className="bg-primary/10">
-              <Bot className="w-8 h-8 text-primary" />
-            </AvatarFallback>
-          </Avatar>
-          <h1 className="text-2xl font-bold">DB Sorcerer</h1>
-          <p className="text-muted-foreground">
-            로그인하여 RAG 시스템을 사용해보세요
-          </p>
-        </div>
-        
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="userId" className="block text-sm font-medium mb-2">
-              사용자 ID
-            </label>
-            <Input
-              id="userId"
-              type="text"
-              value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              placeholder="사용자 ID를 입력하세요"
-              required
-            />
-          </div>
-          
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium mb-2">
-              비밀번호
-            </label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="비밀번호를 입력하세요 (MVP용 - 아무값이나 입력)"
-            />
-          </div>
-          
-          <Button type="submit" className="w-full" disabled={!userId.trim()}>
-            로그인
-          </Button>
-        </form>
-        
-        <p className="text-xs text-muted-foreground text-center mt-4">
-          * MVP 버전입니다. 비밀번호는 검증하지 않습니다.
-        </p>
-      </Card>
-    </div>
-  );
-}
+import {
+  Send, Loader2, User, Bot, AlertCircle, Search, FileText, BrainCircuit, ChevronDown, ChevronUp
+} from 'lucide-react';
+import { sendChatMessageStream, checkServerHealth } from '@/lib/api';
+import { Message, RAGStatus, SourceDocument, StreamEvent } from '@/types/chat';
+import LoginScreen from './LoginScreen';
+import SourceDocuments from './SourceDocuments';
+import RAGStatusIndicator from './RAGStatusIndicator';
+import ChatHeader from './ChatHeader';
+import EmptyState from './EmptyState';
+import ServerOfflineAlert from './ServerOfflineAlert';
 
 export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -97,6 +31,13 @@ export default function ChatInterface() {
   const [mode, setMode] = useState<'normal' | 'deep' | 'deeper'>('deep');
   const [userId, setUserId] = useState<string>('');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [ragStatus, setRagStatus] = useState<RAGStatus>({
+    isLoading: false,
+    stage: 'idle',
+    message: '',
+    sources: [],
+    finalAnswer: '',
+  });
 
   // 서버 상태 확인
   useEffect(() => {
@@ -137,7 +78,7 @@ export default function ChatInterface() {
   };
 
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || ragStatus.isLoading) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -149,35 +90,83 @@ export default function ChatInterface() {
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
+    setRagStatus({
+      isLoading: true,
+      stage: 'starting',
+      message: '연결 중...',
+      sources: [],
+      finalAnswer: '',
+    });
 
-    try {
-      const response = await sendChatMessage({
+    // 어시스턴트 메시지 placeholder 추가
+    const assistantMessageId = (Date.now() + 1).toString();
+    const assistantMessagePlaceholder: Message = {
+      id: assistantMessageId,
+      content: '',
+      role: 'assistant',
+      timestamp: new Date(),
+      sources: [],
+    };
+    setMessages(prev => [...prev, assistantMessagePlaceholder]);
+
+    await sendChatMessageStream(
+      {
         message: userMessage.content,
         mode: mode,
         user_id: userId,
-      });
-
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: response.status === 'success' ? response.response! : response.error!,
-        role: 'assistant',
-        timestamp: new Date(),
-        isError: response.status === 'error',
-      };
-
-      setMessages(prev => [...prev, assistantMessage]);
-    } catch (error) {
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: '예상치 못한 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
-        role: 'assistant',
-        timestamp: new Date(),
-        isError: true,
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
-    }
+      },
+      (event: StreamEvent) => {
+        switch (event.type) {
+          case 'start':
+            setRagStatus(prev => ({ ...prev, stage: 'starting', message: `[${event.mode} 모드] 응답 시작...` }));
+            break;
+          case 'search_query':
+            setRagStatus(prev => ({ ...prev, stage: 'searching', message: `"${event.query}" 검색 중... (단계 ${event.iteration})` }));
+            break;
+          case 'search_results':
+            setRagStatus(prev => ({
+              ...prev,
+              stage: 'analyzing',
+              message: `${event.count}개 문서 조각 발견. 분석 중...`,
+              sources: [...prev.sources, ...event.results],
+            }));
+            break;
+          case 'intermediate_answer':
+            setMessages(prev => prev.map(msg => 
+              msg.id === assistantMessageId 
+                ? { ...msg, content: event.answer }
+                : msg
+            ));
+            setRagStatus(prev => ({ ...prev, stage: 'generating', message: '답변 생성 중...' }));
+            break;
+          case 'final_answer':
+            setMessages(prev => prev.map(msg => 
+              msg.id === assistantMessageId 
+                ? { ...msg, content: event.answer }
+                : msg
+            ));
+            break;
+          case 'complete':
+            setMessages(prev => prev.map(msg => 
+              msg.id === assistantMessageId 
+                ? { ...msg, sources: ragStatus.sources }
+                : msg
+            ));
+            setRagStatus({ isLoading: false, stage: 'complete', message: '완료', sources: [], finalAnswer: '' });
+            setIsLoading(false);
+            break;
+          case 'error':
+            setMessages(prev => prev.map(msg => 
+              msg.id === assistantMessageId 
+                ? { ...msg, content: `오류: ${event.error}`, isError: true }
+                : msg
+            ));
+            setRagStatus({ isLoading: false, stage: 'error', message: event.error, sources: [], finalAnswer: '' });
+            setIsLoading(false);
+            break;
+        }
+      }
+    );
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -195,83 +184,20 @@ export default function ChatInterface() {
   return (
     <div className="flex flex-col h-screen bg-background">
       {/* Header */}
-      <div className="border-b border-border p-4 bg-background/80 backdrop-blur-sm sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-foreground">DB Sorcerer</h1>
-            <p className="text-sm text-muted-foreground">
-              RAG 기반 데이터베이스 질의응답 시스템
-            </p>
-          </div>
-          
-          <div className="flex items-center gap-4">
-            {/* 사용자 정보 */}
-            <div className="hidden sm:flex items-center gap-2 text-sm">
-              <User className="w-4 h-4 text-muted-foreground" />
-              <span className="text-muted-foreground">{userId}</span>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={handleLogout}
-                className="text-xs"
-              >
-                로그아웃
-              </Button>
-            </div>
-            
-            {/* 모드 선택 */}
-            <div className="hidden sm:flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">모드:</span>
-              <Select value={mode} onValueChange={(value) => setMode(value as typeof mode)} disabled={isLoading}>
-                <SelectTrigger className="w-24">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="normal">Normal</SelectItem>
-                  <SelectItem value="deep">Deep</SelectItem>
-                  <SelectItem value="deeper">Deeper</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            
-            {/* 서버 상태 */}
-            <div className="flex items-center gap-2">
-              <Badge 
-                variant={serverStatus === 'online' ? 'default' : serverStatus === 'offline' ? 'destructive' : 'secondary'}
-                className="text-xs"
-              >
-                <div className={`w-2 h-2 rounded-full mr-1 ${
-                  serverStatus === 'online' ? 'bg-green-500' : 
-                  serverStatus === 'offline' ? 'bg-white' : 'bg-yellow-500'
-                }`} />
-                {serverStatus === 'online' ? '연결됨' : 
-                 serverStatus === 'offline' ? '연결 끊김' : '확인 중...'}
-              </Badge>
-            </div>
-          </div>
-        </div>
-      </div>
+      <ChatHeader 
+        userId={userId}
+        mode={mode}
+        serverStatus={serverStatus}
+        isLoading={isLoading}
+        onLogout={handleLogout}
+        onModeChange={(value) => setMode(value)}
+      />
 
       {/* Messages Area */}
       <ScrollArea className="flex-1">
         <div className="max-w-4xl mx-auto p-4 space-y-6">
           {messages.length === 0 ? (
-            <div className="flex items-center justify-center h-[60vh]">
-              <div className="text-center space-y-4 max-w-md mx-auto px-4">
-                <Avatar className="w-16 h-16 mx-auto">
-                  <AvatarFallback className="bg-primary/10">
-                    <Bot className="w-8 h-8 text-primary" />
-                  </AvatarFallback>
-                </Avatar>
-                <h3 className="text-xl font-medium text-foreground">
-                  안녕하세요! 무엇을 도와드릴까요?
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  데이터베이스에 관련된 질문을 자유롭게 해보세요. <br />
-                  복잡한 쿼리나 데이터 분석도 도와드릴 수 있습니다.
-                </p>
-              </div>
-            </div>
+            <EmptyState />
           ) : (
             messages.map((message) => (
               <div
@@ -307,6 +233,7 @@ export default function ChatInterface() {
                     <p className={`text-sm leading-relaxed whitespace-pre-wrap ${
                       message.isError ? 'text-red-700 dark:text-red-300' : ''
                     }`}>{message.content}</p>
+                    <SourceDocuments sources={message.sources || []} />
                   </Card>
                   
                   <div className={`flex items-center gap-2 mt-2 px-1 ${
@@ -332,8 +259,11 @@ export default function ChatInterface() {
             ))
           )}
 
-          {/* Loading indicator */}
-          {isLoading && (
+          {/* RAG Status Indicator */}
+          <RAGStatusIndicator status={ragStatus} />
+
+          {/* Loading indicator (legacy, might be removed) */}
+          {isLoading && messages.length > 0 && !ragStatus.isLoading && (
             <div className="flex gap-4 justify-start">
               <Avatar className="w-8 h-8 flex-shrink-0">
                 <AvatarFallback className="bg-primary/10">
@@ -361,14 +291,7 @@ export default function ChatInterface() {
       {/* Input Area */}
       <div className="border-t border-border bg-background/80 backdrop-blur-sm">
         <div className="max-w-4xl mx-auto p-4">
-          {serverStatus === 'offline' && (
-            <Alert variant="destructive" className="mb-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                백엔드 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.
-              </AlertDescription>
-            </Alert>
-          )}
+          <ServerOfflineAlert isOffline={serverStatus === 'offline'} />
           
           {/* 모바일에서 사용자 정보 및 모드 선택 */}
           <div className="sm:hidden mb-3 space-y-3">

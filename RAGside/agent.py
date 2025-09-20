@@ -35,7 +35,8 @@ class RAGAgent:
         modes = {"normal": 1, "deep": 3, "deeper": 5}
         return modes.get(self.mode, 3)
     
-    def process(self, user_input: str, conversation_history: Optional[List[Dict[str, str]]] = None) -> str:
+    def process_stream(self, user_input: str, conversation_history: Optional[List[Dict[str, str]]] = None):
+        """Generator version of process that yields intermediate results"""
         if conversation_history is None:
             conversation_history = []
             
@@ -50,10 +51,24 @@ class RAGAgent:
             iteration += 1
             print(f"\n🔄 반복 {iteration}/{self.max_iterations}")
             
+            # 검색 쿼리 시작 알림
+            yield {
+                "type": "search_query",
+                "iteration": iteration,
+                "query": current_query
+            }
+            
             # 검색 수행
             print(f"🔍 검색 쿼리: {current_query}")
             search_results = self.retriever.search_chunks(current_query, top_n=3)
             last_search_results = search_results
+            
+            # 검색 결과 전달
+            yield {
+                "type": "search_results",
+                "results": search_results,
+                "count": len(search_results)
+            }
             
             if search_results:
                 # 딕셔너리 형태의 검색 결과에서 텍스트만 추출하여 컨텍스트 구성
@@ -75,11 +90,26 @@ class RAGAgent:
                 print(f"🧠 AI 응답: {result['answer']}")
                 print(f"🔄 계속 검색 필요: {result['need_more']}")
                 
+                # 중간 답변 전달
+                yield {
+                    "type": "intermediate_answer",
+                    "iteration": iteration,
+                    "answer": result['answer'],
+                    "need_more": result['need_more'],
+                    "next_query": result.get('next_query', '')
+                }
+                
                 # Normal 모드나 최종 반복이거나 더 이상 검색 불필요시 종료
                 if self.mode == "normal" or is_final or not result['need_more']:
                     print("✅ 검색 완료")
                     self._show_referenced_chunks(last_search_results)
-                    return result['answer']
+                    
+                    # 최종 답변 전달
+                    yield {
+                        "type": "final_answer",
+                        "answer": result['answer']
+                    }
+                    return
                 
                 # 다음 검색 쿼리 설정
                 current_query = result.get('next_query', '').strip() or user_input
@@ -88,10 +118,28 @@ class RAGAgent:
             except Exception as e:
                 print(f"❌ LLM 처리 오류: {e}")
                 if is_final:
-                    return f"수집된 정보를 바탕으로 답변드리기 어렵습니다. 검색된 정보: {accumulated_context[:500]}..."
+                    error_answer = f"수집된 정보를 바탕으로 답변드리기 어렵습니다. 검색된 정보: {accumulated_context[:500]}..."
+                    yield {
+                        "type": "final_answer",
+                        "answer": error_answer
+                    }
+                    return
                 continue
         
-        return "예상치 못한 오류가 발생했습니다."
+        # 예상치 못한 종료
+        yield {
+            "type": "final_answer",
+            "answer": "예상치 못한 오류가 발생했습니다."
+        }
+
+    def process(self, user_input: str, conversation_history: Optional[List[Dict[str, str]]] = None) -> str:
+        """Wrapper function that maintains compatibility with existing code"""
+        final_answer = ""
+        for update in self.process_stream(user_input, conversation_history):
+            if update["type"] == "final_answer":
+                final_answer = update["answer"]
+                break
+        return final_answer
     
     def _build_prompt(self, user_input: str, context: str, iteration: int, is_final: bool) -> str:
         """모드별 최적화된 프롬프트 생성"""
