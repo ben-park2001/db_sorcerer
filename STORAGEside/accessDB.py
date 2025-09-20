@@ -10,11 +10,11 @@ class DummyAuthDB:
 
         # Paths table
         self.paths = {
-            "path1": {"path": "/test_files/newsadded.docx", "description": "News added document"},
-            "path2": {"path": "/test_files/sample.txt", "description": "Sample text file"},
-            "path3": {"path": "/test_files/sample_2.txt", "description": "Sample text file 2"},
-            "path4": {"path": "/test_files/뉴스2.hwp", "description": "Korean news document"},
-            "path5": {"path": "/test_files/신문3.pdf", "description": "Korean newspaper PDF"}
+            "path1": {"path": "newsadded.docx", "description": "News added document"},
+            "path2": {"path": "sample.txt", "description": "Sample text file"},
+            "path3": {"path": "sample_2.txt", "description": "Sample text file 2"},
+            "path4": {"path": "뉴스2.hwp", "description": "Korean news document"},
+            "path5": {"path": "신문3.pdf", "description": "Korean newspaper PDF"}
         }
 
         # Permissions table

@@ -210,13 +210,12 @@ class FileRetriever:
             if not pathlist:
                 print(f"❌ DB 접근 권한이 없습니다. 사용자: {self.user_id}")
                 return []
-            
             print(f"� 권한 필터링: {len(pathlist)}개 파일에 대해서만 검색")
             
             # 3. ChromaDB에서 유사한 chunk들 검색
             similar_chunks = self._search_similar_chunks(query_embedding, n_results=top_n*2, pathlist=pathlist)
             if not similar_chunks:
-                return []
+                return ['검색된 문서가 없습니다']
             
             # 4. 각 chunk의 원문 추출
             chunk_texts = []
