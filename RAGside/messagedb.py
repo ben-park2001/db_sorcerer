@@ -8,6 +8,7 @@ import zmq
 import time
 import threading
 from flask import Flask, jsonify
+from flask_cors import CORS
 from collections import defaultdict
 
 
@@ -26,6 +27,7 @@ class MessageDB:
         
         # Flask 앱 설정
         self.app = Flask(__name__)
+        CORS(self.app)
         self.setup_routes()
         
         self.running = False

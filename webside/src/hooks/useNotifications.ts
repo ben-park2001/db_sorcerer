@@ -73,7 +73,8 @@ export function useNotifications(userId: string) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10초 타임아웃
       
-      const response = await fetch(`http://localhost:5001/messages/${userId}`, {
+      const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+      const response = await fetch(`http://${hostname}:5001/messages/${userId}`, {
         signal: controller.signal,
         headers: {
           'Cache-Control': 'no-cache'
