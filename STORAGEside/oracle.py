@@ -21,10 +21,11 @@ from git import Repo, InvalidGitRepositoryError
 
 
 class FileWatcher:
-    def __init__(self, watch_folder, push_port=5555, router_port=5556):
+    def __init__(self, watch_folder, push_port=5555, router_port=5556, access_port=5559):
         self.watch_folder = Path(watch_folder)
         self.push_port = push_port
         self.router_port = router_port
+        self.access_port = access_port
         self.user_id = getpass.getuser()
         
         # ZeroMQ context 생성
@@ -38,6 +39,10 @@ class FileWatcher:
         self.router_socket = self.context.socket(zmq.ROUTER)
         self.router_socket.bind(f"tcp://*:{self.router_port}")
         
+        # REP 소켓 (access 함수 처리용)
+        self.rep_socket = self.context.socket(zmq.REP)
+        self.rep_socket.bind(f"tcp://*:{self.access_port}")
+        
         # 감시 대상 파일 확장자
         self.allowed_extensions = {'.docx', '.pdf', '.hwp', '.txt'}
         
@@ -50,6 +55,7 @@ class FileWatcher:
         
         # Router 처리를 위한 스레드 플래그
         self.router_running = False
+        self.access_running = False
         
     def _init_git_repo(self):
         """Git 저장소 초기화"""
@@ -296,6 +302,34 @@ class FileWatcher:
                 if self.router_running:  # 종료 중이 아닌 경우에만 에러 출력
                     print(f"❌ 파일 요청 처리 중 오류: {e}")
     
+    def _handle_access_request_rep(self):
+        """ZeroMQ REP 소켓으로 access 요청 처리"""
+        self.access_running = True
+        print(f"🔑 access 서버 시작: tcp://*:{self.access_port}")
+        
+        while self.access_running:
+            try:
+                # 메시지 수신 (non-blocking with timeout)
+                if self.rep_socket.poll(timeout=1000):  # 1초 타임아웃
+                    request = self.rep_socket.recv_json()
+                    print(f"📥 access 요청 수신: {request}")
+                    
+                    # access 함수 호출
+                    user_id = request.get('user_id')
+                    if user_id:
+                        pathlist = self.access(user_id)
+                        response = {'status': 'success', 'pathlist': pathlist}
+                    else:
+                        response = {'status': 'error', 'error': 'user_id가 필요합니다'}
+                    
+                    # 응답 전송
+                    self.rep_socket.send_json(response)
+                    print(f"📤 access 응답 전송: {len(pathlist) if user_id else 0}개 파일")
+                    
+            except Exception as e:
+                if self.access_running:  # 종료 중이 아닌 경우에만 에러 출력
+                    print(f"❌ access 요청 처리 중 오류: {e}")
+    
     def _process_file_request(self, request_data):
         """파일 요청 처리 로직"""
         try:
@@ -344,6 +378,23 @@ class FileWatcher:
             print(f"❌ 파일 요청 처리 중 오류: {e}")
             return {'error': str(e), 'status': 'error'}
     
+    def access(self, user_id: str) -> list:
+        """
+        사용자 ID를 받아 접근 가능한 파일 경로 리스트를 반환
+        Args:
+            user_id: 사용자 ID
+        Returns:
+            접근 가능한 파일 경로 리스트
+        """
+        # 더미 데이터: 3개 파일 경로 반환
+        dummy_paths = [
+            "data/user_document1.txt",
+            "data/user_document2.pdf", 
+            "data/user_document3.docx"
+        ]
+        print(f"🔑 접근 권한 조회: 사용자 {user_id} -> {len(dummy_paths)}개 파일")
+        return dummy_paths
+    
     def start_watching(self):
         """파일 감시 시작"""
         class Handler(FileSystemEventHandler):
@@ -379,6 +430,12 @@ class FileWatcher:
         router_thread.start()
         return router_thread
     
+    def start_access_server(self):
+        """ZeroMQ REP 서버 시작 (access 함수 처리용)"""
+        access_thread = threading.Thread(target=self._handle_access_request_rep, daemon=True)
+        access_thread.start()
+        return access_thread
+    
     def start(self):
         """전체 시스템 시작"""
         print("=" * 50)
@@ -391,12 +448,16 @@ class FileWatcher:
         # ZeroMQ Router 서버를 별도 스레드에서 시작
         router_thread = self.start_router_server()
         
+        # ZeroMQ REP 서버를 별도 스레드에서 시작 (access 처리용)
+        access_thread = self.start_access_server()
+        
         try:
             print("\n📋 사용 방법:")
             print(f"  • 감시 폴더: {self.watch_folder}")
             print(f"  • 지원 파일: {', '.join(self.allowed_extensions)}")
             print(f"  • 파일 변경사항 전송: PUSH tcp://localhost:{self.push_port}")
             print(f"  • 파일 요청 처리: ROUTER tcp://*:{self.router_port}")
+            print(f"  • Access 권한 처리: REP tcp://*:{self.access_port}")
             if self.repo:
                 print(f"  • Git 저장소: 활성화됨")
                 print(f"  • Git 브랜치: {self.repo.active_branch.name}")
@@ -411,16 +472,20 @@ class FileWatcher:
         except KeyboardInterrupt:
             print("\n\n🛑 시스템 종료 중...")
             self.router_running = False
+            self.access_running = False
             self.observer.stop()
             print("✅ 감시 종료 완료")
         
         self.observer.join()
         if router_thread.is_alive():
             router_thread.join(timeout=1)
+        if access_thread.is_alive():
+            access_thread.join(timeout=1)
         
         # ZeroMQ 정리
         self.push_socket.close()
         self.router_socket.close()
+        self.rep_socket.close()
         self.context.term()
 
 
@@ -430,12 +495,14 @@ def main():
     WATCH_FOLDER = "./test_files"
     PUSH_PORT = 5555  # 파일 변경사항 전송용 (PUSH 소켓)
     ROUTER_PORT = 5556  # 파일 요청 처리용 (ROUTER 소켓)
+    ACCESS_PORT = 5559  # access 함수 처리용 (REP 소켓)
     
     # FileWatcher 인스턴스 생성 및 시작
     watcher = FileWatcher(
         watch_folder=WATCH_FOLDER,
         push_port=PUSH_PORT,
-        router_port=ROUTER_PORT
+        router_port=ROUTER_PORT,
+        access_port=ACCESS_PORT
     )
     
     watcher.start()

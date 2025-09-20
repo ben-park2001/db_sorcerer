@@ -18,14 +18,23 @@ from db import search_data
 class FileRetriever:
     """파일을 요청하고 내용을 받아오는 간단한 클라이언트"""
     
-    def __init__(self, preprocessor_host="localhost", preprocessor_port=5557):
+    def __init__(self, preprocessor_host="localhost", preprocessor_port=5557, oracle_host="localhost", oracle_port=5559, user_id=None):
         """
         Args:
             preprocessor_host: file_preprocessor 서버 주소
             preprocessor_port: file_preprocessor 서버 포트 (기본값: 5557)
+            oracle_host: oracle 서버 주소 (access 함수용)
+            oracle_port: oracle 서버 포트 (기본값: 5559)
+            user_id: 사용자 ID (권한 확인용, 필수)
         """
+        if not user_id:
+            raise ValueError("사용자 ID가 필요합니다. 접근이 거부되었습니다.")
+        
         self.preprocessor_host = preprocessor_host
         self.preprocessor_port = preprocessor_port
+        self.oracle_host = oracle_host
+        self.oracle_port = oracle_port
+        self.user_id = user_id
         
         # ZeroMQ 컨텍스트와 소켓 초기화
         self.context = zmq.Context()
@@ -33,7 +42,56 @@ class FileRetriever:
         self.socket.connect(f"tcp://{preprocessor_host}:{preprocessor_port}")
         
         print(f"📡 FileRetriever 연결됨: tcp://{preprocessor_host}:{preprocessor_port}")
+        print(f"🔑 Oracle 연결됨: tcp://{oracle_host}:{oracle_port}")
         print(f"🗄️ db.py 연결됨")
+        if user_id:
+            print(f"👤 사용자 ID: {user_id}")
+    
+    def _get_user_accessible_files(self, user_id: str) -> List[str]:
+        """
+        ZMQ 통신을 통해 oracle.py의 access 함수를 호출하여 
+        사용자 ID를 기반으로 접근 가능한 파일 목록을 반환합니다.
+        
+        Args:
+            user_id: 사용자 ID
+            
+        Returns:
+            접근 가능한 파일 경로 목록 (빈 리스트 가능)
+        """
+        if not user_id:
+            return []
+        
+        try:
+            # Oracle 서버에 REQ 소켓으로 연결
+            oracle_socket = self.context.socket(zmq.REQ)
+            oracle_socket.connect(f"tcp://{self.oracle_host}:{self.oracle_port}")
+            
+            # access 요청 전송
+            request = {"user_id": user_id}
+            oracle_socket.send_json(request)
+            
+            # 응답 수신 (5초 타임아웃)
+            if oracle_socket.poll(timeout=5000):
+                response = oracle_socket.recv_json()
+                
+                if response.get('status') == 'success':
+                    pathlist = response.get('pathlist', [])
+                    print(f"🔑 Oracle에서 권한 정보 수신: {len(pathlist)}개 파일")
+                    oracle_socket.close()
+                    return pathlist
+                else:
+                    error_msg = response.get('error', '알 수 없는 오류')
+                    print(f"❌ Oracle 권한 조회 실패: {error_msg}")
+                    oracle_socket.close()
+                    return []
+            else:
+                print(f"⏰ Oracle 응답 타임아웃")
+                oracle_socket.close()
+                return []
+                
+        except Exception as e:
+            print(f"❌ Oracle 통신 오류: {e}")
+            return []
     
     def get_file_content(self, file_path: str, timeout_ms: int = 5000) -> Optional[str]:
         """
@@ -96,10 +154,10 @@ class FileRetriever:
             print(f"❌ Query embedding 생성 실패: {e}")
             return None
     
-    def _search_similar_chunks(self, query_embedding: List[float], n_results: int = 10) -> List[Dict]:
+    def _search_similar_chunks(self, query_embedding: List[float], n_results: int = 10, pathlist=None) -> List[Dict]:
         """db.py를 사용하여 유사한 chunk들을 검색합니다."""
         try:
-            results = search_data(query_embedding, n_results=n_results)
+            results = search_data(query_embedding, n_results=n_results, pathlist=pathlist)
             
             chunks = []
             for i, (file_path, start_idx, end_idx) in enumerate(results):
@@ -147,12 +205,20 @@ class FileRetriever:
             if not query_embedding:
                 return []
             
-            # 2. ChromaDB에서 유사한 chunk들 검색
-            similar_chunks = self._search_similar_chunks(query_embedding, n_results=top_n*2)
+            # 2. 사용자 권한에 따른 pathlist 생성
+            pathlist = self._get_user_accessible_files(self.user_id)
+            if not pathlist:
+                print(f"❌ DB 접근 권한이 없습니다. 사용자: {self.user_id}")
+                return []
+            
+            print(f"� 권한 필터링: {len(pathlist)}개 파일에 대해서만 검색")
+            
+            # 3. ChromaDB에서 유사한 chunk들 검색
+            similar_chunks = self._search_similar_chunks(query_embedding, n_results=top_n*2, pathlist=pathlist)
             if not similar_chunks:
                 return []
             
-            # 3. 각 chunk의 원문 추출
+            # 4. 각 chunk의 원문 추출
             chunk_texts = []
             for chunk in similar_chunks:
                 chunk_text = self._extract_chunk_text(
@@ -166,7 +232,7 @@ class FileRetriever:
             if not chunk_texts:
                 return []
             
-            # 4. Reranking으로 상위 n개 선별
+            # 5. Reranking으로 상위 n개 선별
             try:
                 reranked_chunks = Reranker(query, chunk_texts, top_n=top_n)['results']
                 raw_chunks = []
