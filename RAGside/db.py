@@ -14,11 +14,16 @@ def create_data(file_path, start_idx, end_idx, embedding):
 def delete_data(file_path):
     collection.delete(where={"file_path": file_path})
 
-def search_data(query_embedding, n_results=10): #테스트해보기?
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=n_results
-    )
-    
-    return [(meta["file_path"], meta["start_idx"], meta["end_idx"]) 
-            for meta in results["metadatas"][0]]
+def search_data(query_embedding, n_results=10, pathlist=None):
+    if pathlist:
+        # pathlist가 있으면 해당 파일들만 검색
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n_results,
+            where={"file_path": {"$in": pathlist}}
+        )
+        return [(meta["file_path"], meta["start_idx"], meta["end_idx"]) 
+                for meta in results["metadatas"][0]]
+    else:
+        # pathlist가 없으면 권한이 없으므로 빈 리스트 반환
+        return []
