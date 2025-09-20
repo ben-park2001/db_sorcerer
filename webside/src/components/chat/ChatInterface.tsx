@@ -103,7 +103,7 @@ export default function ChatInterface() {
     const assistantMessageId = (Date.now() + 1).toString();
     const assistantMessagePlaceholder: Message = {
       id: assistantMessageId,
-      content: '',
+      content: '...', // 초기 content를 '...'와 같은 간단한 로딩 표시로 설정
       role: 'assistant',
       timestamp: new Date(),
       sources: [],
@@ -122,14 +122,22 @@ export default function ChatInterface() {
             setRagStatus(prev => ({ ...prev, stage: 'starting', message: `[${event.mode} 모드] 응답 시작...` }));
             break;
           case 'search_query':
-            setRagStatus(prev => ({ ...prev, stage: 'searching', message: `"${event.query}" 검색 중... (단계 ${event.iteration})` }));
+            const searchQueryMessage = `"${event.query}" 검색 중... (단계 ${event.iteration})`;
+            // '검색 중' 메시지를 어시스턴트 말풍선에 직접 업데이트
+            setMessages(prev => prev.map(msg => 
+              msg.id === assistantMessageId 
+                ? { ...msg, content: searchQueryMessage }
+                : msg
+            ));
+            // RAGStatusIndicator는 이제 보이지 않으므로 메시지를 비워도 됩니다.
+            setRagStatus(prev => ({ ...prev, stage: 'searching', message: '' }));
             break;
           case 'search_results':
             // RAG 상태 업데이트
             setRagStatus(prev => ({
               ...prev,
               stage: 'analyzing',
-              message: `${event.count}개 문서 조각 발견. 분석 중...`,
+              message: '', // RAGStatusIndicator를 사용하지 않으므로 비웁니다.
               sources: [...prev.sources, ...event.results],
             }));
             // 메시지에도 즉시 소스 추가
@@ -148,6 +156,7 @@ export default function ChatInterface() {
               msg.id === assistantMessageId 
                 ? { 
                     ...msg, 
+                    content: '', // 중간 답변이 시작되면 기존 content는 비움
                     intermediateSteps: [...(msg.intermediateSteps || []), {
                       text: event.answer,
                       sources: msg.sources ? msg.sources.slice() : [] // 메시지에 누적된 소스들 사용
@@ -155,7 +164,7 @@ export default function ChatInterface() {
                   }
                 : msg
             ));
-            setRagStatus(prev => ({ ...prev, stage: 'generating', message: '답변 생성 중...' }));
+            setRagStatus(prev => ({ ...prev, stage: 'generating', message: '' }));
             break;
           case 'final_answer':
             setMessages(prev => prev.map(msg => 
@@ -169,7 +178,7 @@ export default function ChatInterface() {
             ));
             break;
           case 'complete':
-            setRagStatus({ isLoading: false, stage: 'complete', message: '완료', sources: [], finalAnswer: '' });
+            setRagStatus({ isLoading: false, stage: 'idle', message: '', sources: [], finalAnswer: '' });
             setIsLoading(false);
             break;
           case 'error':
@@ -285,7 +294,7 @@ export default function ChatInterface() {
                     )}
                     
                     {/* 중간 과정이나 최종 답변이 없는 일반적인 경우 */}
-                    {(!message.intermediateSteps || message.intermediateSteps.length === 0) && !message.finalAnswer && (
+                    {(!message.intermediateSteps || message.intermediateSteps.length === 0) && !message.finalAnswer && message.content && (
                       <p className={`text-sm leading-relaxed whitespace-pre-wrap ${
                         message.isError ? 'text-red-700 dark:text-red-300' : ''
                       }`}>{message.content}</p>
@@ -321,7 +330,9 @@ export default function ChatInterface() {
           )}
 
           {/* RAG Status Indicator */}
-          <RAGStatusIndicator status={ragStatus} />
+          {ragStatus.isLoading && ragStatus.stage !== 'searching' && ragStatus.stage !== 'analyzing' && ragStatus.stage !== 'generating' && (
+            <RAGStatusIndicator status={ragStatus} />
+          )}
 
           {/* Loading indicator (legacy, might be removed) */}
           {isLoading && messages.length > 0 && !ragStatus.isLoading && (
